@@ -1,0 +1,273 @@
+# AGENTS.md
+
+This file provides guidance for AI coding agents working in this repository.
+
+Use this file together with `README.md`.  The README is the human-facing project
+overview.  This file is the agent-facing operational map.
+
+## Project Overview
+
+`bashdeps` is a small deterministic Bash tool for materializing exact external
+artifacts declared by a committed manifest.
+
+A dependency declaration identifies an artifact, its HTTPS retrieval URL, its
+repository-relative destination, and its approved SHA-256 digest.  Byte acceptance
+is determined by digest equality.
+
+The project deliberately does less than a package manager.  It does not resolve
+versions, discover releases, execute install hooks, build dependency graphs, or
+infer whether an artifact is executable.
+
+The canonical maintained implementation is `src/bashdeps.bash`.
+
+`make build` generates:
+
+```text
+dist/bashdeps.dev.bash
+dist/bashdeps.bash
+dist/SHA256SUMS
+```
+
+The supported public interface is the executable CLI.  There is no supported
+sourceable library API in version 1.
+
+## Read the ADRs and Specification First
+
+The ADR collection is the canonical source of architectural intent.
+
+Before making significant changes, review the relevant files under `doc/adr/`.
+Also review `doc/bashdeps-spec.md` whenever a change can affect observable public
+behavior.
+
+Preserve these foundational boundaries:
+
+- manifest declarations are data and are never sourced or evaluated;
+- SHA-256 equality is the authority for acceptable bytes;
+- hashes are mandatory even when upstream does not publish checksums;
+- `verify` performs no network access and no intentional mutation;
+- `sync` preflights all required candidates before intentional publication;
+- downloader details remain behind a private adapter;
+- `curl` is preferred and usable `wget` is the fallback;
+- destinations are repository-relative to the invocation's current directory;
+- symbolic-link path traversal is rejected;
+- bashdeps does not own or prune an entire `vendor/` tree;
+- ordinary artifact purpose and executability are not inferred;
+- the public API is the CLI, not private Bash helpers.
+
+## Clarify Before Acting
+
+When a request is ambiguous, determine whether two reasonable interpretations
+would materially change the public contract or architecture.
+
+If existing ADRs, the specification, tests, or repository context answer the
+question, follow them and continue.
+
+If the ambiguity would materially change public behavior and the repository does
+not establish an answer, ask the minimum question necessary.
+
+For ordinary implementation choices that do not affect the public contract,
+choose the conventional, conservative solution and continue.
+
+Do not invent architectural rationale when the repository does not establish it.
+
+## Architectural Principles
+
+- Bash 4.3+ is the minimum runtime.
+- `src/bashdeps.bash` is the maintained implementation.
+- `dist/` contains generated release artifacts and is not maintained source.
+- The CLI operations are `install`, `sync`, `verify`, `help`, and `version`.
+- `install` and manifest records use the same named field grammar.
+- Required fields are `id`, `url`, `dest`, and `digest`.
+- Field order is irrelevant.
+- A field token is split at the first `=` only.
+- Unknown manifest fields fail closed in version 1.
+- The digest grammar is `sha256:` followed by exactly 64 lowercase hexadecimal
+  characters.
+- The recommended identity convention is `PACKAGE@VERSION`; identity remains
+  opaque to bashdeps.
+- Downloader selection is `curl`, then usable `wget`, then failure.
+- SHA-256 command selection is `sha256sum`, then `shasum -a 256`, then failure.
+- Correct existing bytes require no network request.
+- Candidate bytes are staged and verified before publication.
+- Multi-file synchronization is not claimed to be globally atomic.
+- Newly published files use mode `0644`; verify ignores mode.
+- Version 1 does not implement locking or concurrent mutation coordination.
+
+## Technology Stack
+
+Runtime:
+
+- Bash 4.3+
+- Bash builtins and language features
+- `curl` or usable HTTPS-capable `wget` when acquisition is required
+- `sha256sum` or `shasum -a 256`
+- ordinary Unix-like filesystem utilities used by publication
+
+Development:
+
+- Make
+- Bats
+- ShellCheck
+- shfmt
+- GitHub Actions
+
+## Coding Guidelines
+
+Prefer small, readable Bash functions with one explicit responsibility.
+
+Manifest data is never executable input.  Do not use `eval` or `source` to parse
+manifest records or CLI field values.
+
+Do not construct shell command strings from URLs, destinations, identities, or
+digests.  Pass values as quoted argv elements.
+
+Quote expansions deliberately.
+
+Keep downloader-specific argv and capability behavior inside downloader adapter
+functions.  Synchronization logic should reason about acquisition outcomes, not
+curl or wget flags.
+
+Keep SHA-256 command differences behind a private hashing helper.
+
+Private helpers and metadata variables use the `__bashdeps_` namespace.  Do not
+create public Bash functions without an architectural decision.
+
+Do not infer executable mode from filenames, shebangs, URLs, identities, or file
+contents.
+
+Do not normalize or repair a manifest silently.  Invalid declarations fail.
+
+Avoid additional external runtime dependencies when Bash builtins or already
+accepted platform utilities implement the behavior clearly and safely.
+
+## Build and Release Boundaries
+
+Treat `src/bashdeps.bash` as the source of truth.  Do not edit generated files
+under `dist/` directly.
+
+`dist/bashdeps.dev.bash` retains source comments.
+
+`dist/bashdeps.bash` removes full-line source comments only.  Do not introduce
+minification, inline-comment stripping, whitespace normalization, transpilation,
+or other executable-source rewriting without a new architectural decision.
+
+The project does not generate `bashdeps.min.bash`.
+
+Generated artifacts embed version, source revision timestamp/build date, and
+commit metadata.
+
+`dist/SHA256SUMS` describes the final generated Bash artifact bytes.
+
+Tests must cover maintained source and both generated Bash artifacts.
+
+## Scope Discipline
+
+Unless explicitly requested otherwise, produce the smallest correct change that
+satisfies the documented behavior.
+
+Do not expand bashdeps into a package manager.
+
+Features such as semantic-version resolution, registries, transitive dependency
+resolution, recursive manifests, install hooks, authenticated artifact retrieval,
+automatic digest updates, arbitrary plugins, or package-manager integration
+belong outside version 1 unless a later ADR changes that boundary.
+
+A future manifest field such as `mode=0775` is architecturally possible because
+the named-field grammar is extensible, but unknown fields intentionally fail in
+version 1.  Do not implement speculative fields before their behavior is defined.
+
+Do not perform unrelated refactoring, formatting, renaming, or documentation
+changes in a focused patch.
+
+If additional improvement opportunities are discovered, record them separately
+rather than silently broadening the change.
+
+## Documentation Standards
+
+Follow the documentation-driven, test-second philosophy established by the ADRs.
+
+Documentation should explain intent, assumptions, constraints, safety posture,
+observable behavior, and non-goals where appropriate.
+
+`doc/bashdeps-spec.md` is the normative public-behavior reference.  ADRs preserve
+why decisions were made.
+
+When implementation and documentation disagree, do not silently choose whichever
+is convenient.  Determine whether the implementation is wrong or the documented
+decision has genuinely changed.
+
+## Testing
+
+Bats is the primary public behavior framework.
+
+Ordinary tests must not depend on live public network services.
+
+Use temporary project roots and controlled fixture bytes.  Exercise downloader
+selection and failure through PATH-controlled fake commands where practical.
+
+Run the same public behavior suite against:
+
+- `src/bashdeps.bash`;
+- `dist/bashdeps.dev.bash`;
+- `dist/bashdeps.bash`.
+
+Generated artifacts are products and must not be assumed correct because source
+tests passed.
+
+Every functional change should prompt these questions:
+
+- What public behavior changed?
+- Which ADR or specification section governs it?
+- How can the behavior be verified deterministically?
+- Does it affect manifest parsing, byte identity, network boundaries, filesystem
+  safety, output channels, or exit statuses?
+- Does the same test pass against every shipped Bash artifact?
+
+Bug fixes should add or update a regression test that would have failed before
+the fix.
+
+## Validation
+
+When practical:
+
+- review the resulting diff;
+- run Bash syntax validation;
+- run Bats tests against source and both generated artifacts;
+- run ShellCheck and shfmt checks on maintained source;
+- verify generated artifact metadata;
+- verify `dist/SHA256SUMS` against final generated bytes;
+- confirm `verify` tests do not accidentally reach the network;
+- confirm generated comment removal does not alter observable behavior.
+
+Report only validation that actually ran.
+
+## Common Failure Modes
+
+Avoid:
+
+- treating filename presence as proof of dependency identity;
+- making hashes optional because upstream does not publish one;
+- parsing a field token at every `=` instead of the first `=` only;
+- using `eval`, `source`, or shell command strings for manifest data;
+- accepting unknown fields silently;
+- making `verify` repair or download anything;
+- publishing one sync candidate before all required candidates pass preflight;
+- downloading directly over an existing destination;
+- following destination symlinks;
+- pruning undeclared files from `vendor/` or another directory;
+- assuming curl is always installed;
+- treating every wget implementation as feature-identical;
+- treating downloader success as proof of artifact identity;
+- changing file mode on an already-correct destination during verify or sync;
+- exposing private `__bashdeps_` functions as though they were a supported API;
+- editing generated distribution artifacts;
+- introducing minification into this project;
+- claiming multi-file transactionality or concurrency guarantees version 1 does
+  not provide.
+
+## Final Principle
+
+`bashdeps` knows how to materialize exact approved bytes at declared local paths
+and almost nothing about what those bytes mean.
+
+Every change should preserve that clarity.
