@@ -3,7 +3,8 @@
 bashdeps_test_setup() {
   local raw_executable
   raw_executable=${BASHDEPS_EXECUTABLE:-$BATS_TEST_DIRNAME/../src/bashdeps.bash}
-  export BASHDEPS_TEST_EXECUTABLE="$(cd "$(dirname "$raw_executable")" && pwd -P)/$(basename "$raw_executable")"
+  BASHDEPS_TEST_EXECUTABLE="$(cd "$(dirname "$raw_executable")" && pwd -P)/$(basename "$raw_executable")"
+  export BASHDEPS_TEST_EXECUTABLE
   BASHDEPS_TEST_PROJECT="$BATS_TEST_TMPDIR/project"
   mkdir -p "$BASHDEPS_TEST_PROJECT"
   cd "$BASHDEPS_TEST_PROJECT" || return
