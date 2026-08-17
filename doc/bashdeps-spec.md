@@ -54,12 +54,12 @@ A logical record may occupy one physical line:
 id=wesley-dean/mktext@0.0.7 url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash dest=vendor/mktext.bash digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
 ```
 
-or may be folded across indented continuation lines:
+or may use explicit trailing continuation markers:
 
 ```text
-id=wesley-dean/mktext@0.0.7
-  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash
-  dest=vendor/mktext.bash
+id=wesley-dean/mktext@0.0.7 \
+  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash \
+  dest=vendor/mktext.bash \
   digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
 ```
 
@@ -70,23 +70,21 @@ Those forms are semantically equivalent.
 Manifest physical lines are assembled into logical records before field
 tokenization.
 
-A blank line is ignored.
+A physical content line requests continuation only when it ends with a standalone
+`\` marker.  The marker must be the final character before the newline and must
+be separated from the preceding field text by horizontal whitespace.  Spaces or
+tabs after the marker are invalid.
 
-A line whose first non-horizontal-whitespace character is `#` is ignored.
-
-A non-comment content line beginning in column 1 starts a new logical record.  If
-a prior logical record is being accumulated, that prior record is complete before
-the new one begins.
-
-A non-comment content line beginning with one or more spaces or tabs continues the
-current logical record.  Its leading horizontal whitespace is removed and the
-remaining text is appended to the logical record with exactly one ASCII space.
+When a continuation marker is present, bashdeps removes the marker, trims leading
+horizontal whitespace from the immediately following physical content line, and
+joins the fragments with exactly one ASCII space.  Repeated markers may continue
+the same logical record across additional physical lines.
 
 Conceptually:
 
 ```text
-foo
-  bar
+foo \
+  bar \
   bazzle
 ```
 
@@ -96,31 +94,21 @@ folds to:
 foo bar bazzle
 ```
 
-A continuation line encountered before any logical record has started is an error.
-For example, this is invalid:
+Indentation alone never continues a record.  Leading spaces or tabs are cosmetic.
+A physical content line without a preceding continuation marker begins a new
+logical record even when it is indented.
 
-```text
-  id=example@1
-  url=https://example.test/example
-```
+Outside an active continuation, blank lines are ignored and a line whose first
+non-horizontal-whitespace character is `#` is ignored.
 
-Comments and blank lines are semantically invisible and therefore do not terminate
-a logical record.  They may appear between continuation lines:
+Inside an active continuation, the very next physical line must contain record
+content.  A blank line or full-line comment immediately after a continuation
+marker is an invalid manifest rather than something bashdeps silently skips.
 
-```text
-id=example@1
-  url=https://example.test/example
+A continuation marker on the final physical line of the manifest is invalid.
 
-  # Keep this artifact under the default dependency tree.
-  dest=vendor/example
-  digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-```
-
-The next non-comment content line determines whether the current record continues
-or a new record begins.
-
-Indentation has no meaning after record assembly.  It does not create sections,
-nesting, scopes, or prefixes and does not modify any field value.
+The `\` marker is a bashdeps manifest continuation convention only.  It does not
+enable shell escaping, quoting, expansion, or evaluation.
 
 See ADR-015 for the line-folding rationale and complete physical-line rules.
 
@@ -162,8 +150,7 @@ Each record requires exactly one of each field:
 - `digest`
 
 Field order is irrelevant, including when fields occupy separate physical lines.
-Any valid field may begin a logical record in column 1; `id=` is not required to
-be physically first.
+Any valid field may appear first; `id=` is not required to be physically first.
 
 Duplicate fields, missing fields, and unknown fields are errors.
 
@@ -172,12 +159,14 @@ manifest that depends on newer semantics.
 
 ### Comments
 
-Blank lines are ignored.
+Blank lines are ignored outside an active continuation.
 
-A line whose first non-horizontal-whitespace character is `#` is ignored.
+A line whose first non-horizontal-whitespace character is `#` is ignored outside
+an active continuation.
 
-Full-line comments may appear between physical lines of a folded logical record
-without terminating that record.
+A blank line or full-line comment immediately after a trailing continuation marker
+is invalid because the marker promises that the next physical line continues the
+same logical record.
 
 Inline comments are not supported in version 1.  For example:
 
@@ -548,8 +537,9 @@ The public exit status contract is:
 A malformed digest is status 2.  A syntactically valid declaration whose acquired
 candidate hashes differently is status 5.
 
-An invalid folded record, including a continuation line before any current logical
-record, is status 2.
+An invalid folded record, including an unterminated continuation, a blank/comment
+line where continued record content is required, or a malformed continuation
+marker, is status 2.
 
 An invalid `--dest-root` value or a declaration outside the selected destination
 root is status 2 because the operation has not reached filesystem publication.
