@@ -25,6 +25,12 @@ Version 1 requires:
 Downloader selection prefers `curl`, then falls back to `wget`.
 SHA-256 selection prefers `sha256sum`, then falls back to `shasum -a 256`.
 
+For version 1, a Wget backend is usable only when `wget --help` advertises both
+`-T` timeout control and `-t` tries control.  The adapter uses `-T 120 -t 1` so
+one Wget invocation represents one bounded bashdeps acquisition attempt.  A
+present Wget command that lacks those controls is treated as an unavailable
+runtime capability.  See ADR-012.
+
 A downloader is not required when an operation does not need network access.
 
 ## Manifest
@@ -286,9 +292,12 @@ retries for transport failures.
 The curl backend uses HTTPS-only redirect restrictions, a redirect limit, and
 finite connection/transfer timeouts as defined by ADR-004.
 
-Portable wget implementations have different capabilities.  Bashdeps does not
-claim that wget provides transport-policy parity with curl.  Mandatory SHA-256
-verification remains the backend-independent authority for candidate acceptance.
+The Wget backend is eligible only when its local help surface advertises `-T` and
+`-t`.  When selected, version 1 invokes Wget with a 120-second timeout and one
+backend-managed try per acquisition-layer attempt.  Portable Wget implementations
+still have different timeout semantics, so bashdeps does not claim
+transport-policy parity with curl.  Mandatory SHA-256 verification remains the
+backend-independent authority for candidate acceptance.
 
 `verify` never invokes a downloader.
 
