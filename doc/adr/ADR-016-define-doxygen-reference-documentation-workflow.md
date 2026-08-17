@@ -8,14 +8,19 @@ Proposed
 
 ## Intent and Scope
 
-This Architecture Decision Record defines the development workflow used to turn
-bashdeps' ADR-014 Doxygen-style Bash comments into browsable reference
+This Architecture Decision Record defines the development and publication workflow
+used to turn bashdeps' ADR-014 Doxygen-style Bash comments into browsable reference
 documentation.
 
-The decision intentionally follows the established Bootstrap and mktext project
-pattern: a root-level `Doxyfile`, an on-demand Bash Doxygen filter under
-`vendor/`, generated HTML under `doc/reference/`, and Make targets that make
-regeneration and cleanup explicit.
+The decision follows the established Bootstrap and mktext project pattern for
+local generation: a root-level `Doxyfile`, an on-demand Bash Doxygen filter under
+`vendor/`, generated HTML under `doc/reference/`, and `make docs` as the canonical
+entry point.  For publication, bashdeps deliberately improves on Bootstrap's
+current repository-stored output model by generating the documentation inside a
+GitHub Actions Pages workflow and publishing that generated tree directly.
+
+Generated Doxygen HTML is build output.  It SHALL NOT be committed to the bashdeps
+repository.
 
 This is development and documentation tooling only.  It does not add a runtime
 dependency to `bashdeps.bash`, alter the public CLI, or change generated release
@@ -27,10 +32,10 @@ ADR-014 established a documentation-first source standard based on Bootstrap
 ADR-045.  `src/bashdeps.bash` now uses structured Doxygen-style `##` comments for
 file, function, and variable documentation.
 
-That source documentation is useful directly in the maintained Bash file, but
-the project currently lacks the scaffolding needed to render it into navigable
-reference material.  Bootstrap and mktext solve the same problem with Doxygen and
-the `bash-doxygen` AWK input filter maintained at:
+That source documentation is useful directly in the maintained Bash file, but the
+project needs a reproducible way to render it into navigable reference material.
+Bootstrap and mktext solve the local-generation portion of the same problem with
+Doxygen and the `bash-doxygen` AWK input filter maintained at:
 
 ```text
 https://github.com/wesley-dean/bash-doxygen
@@ -39,27 +44,37 @@ https://github.com/wesley-dean/bash-doxygen
 Both projects expose documentation generation through Make rather than requiring
 contributors to remember raw Doxygen commands or filter setup.
 
-bashdeps should use the same operational model so documentation generation is
-predictable across the related Bash projects.
+Bootstrap also publishes `doc/reference/` through a GitHub Pages workflow.  Its
+current workflow assumes generated reference files are already present in the
+repository and uploads that directory.  bashdeps does not need to preserve that
+implementation detail: GitHub Actions can generate the same directory from the
+maintained source immediately before publishing it.
+
+Generating at deployment time removes a large set of reproducible HTML, CSS,
+JavaScript, and image assets from source control while preserving both local
+reviewability and hosted documentation.
 
 ## Decision Drivers
 
-- Reuse the established Bootstrap and mktext documentation workflow.
-- Keep `make docs` as the canonical documentation-generation entry point.
+- Reuse the established Bootstrap and mktext local Doxygen workflow.
+- Keep `make docs` as the canonical documentation-generation entry point locally
+  and in CI.
 - Generate reference material from maintained source rather than distribution
   artifacts.
 - Keep the Bash-specific Doxygen preprocessing rule explicit and inspectable.
 - Avoid committing downloaded development tooling as maintained project source.
-- Keep generated reference output separate from hand-maintained prose and ADRs.
+- Treat generated Doxygen output as reproducible build state rather than source.
+- Publish current documentation automatically from the default branch.
 - Prevent stale generated HTML from surviving source renames or documentation
   removal.
-- Preserve a README sentinel that explains how `doc/reference/` is produced.
 - Keep ordinary `make clean` focused on normal build products while providing a
   broader cleanup target for generated documentation and downloaded tooling.
+- Avoid a `docs-stage` workflow whose only purpose would be committing generated
+  artifacts that Pages can build itself.
 
 ## Decision
 
-### Canonical entry point
+### Canonical local entry point
 
 The project SHALL provide:
 
@@ -71,11 +86,14 @@ as the canonical command for generating browsable reference documentation.
 
 The `docs` target SHALL:
 
-1. remove stale generated reference output while preserving the hand-maintained
-   `doc/reference/README.md` sentinel;
+1. remove any prior generated reference output;
 2. ensure the Bash Doxygen filter is present locally;
 3. create `doc/reference/` when necessary; and
 4. invoke Doxygen using the repository root `Doxyfile`.
+
+The resulting `doc/reference/` tree is local generated output suitable for
+inspection in a browser.  It is not repository source and SHALL remain ignored by
+Git.
 
 ### Doxygen configuration
 
@@ -118,10 +136,10 @@ When the filter is absent, its Make target SHALL download it to a temporary file
 make the resulting file executable, and rename it into place only after the
 transfer succeeds.
 
-The downloaded filter is development tooling.  It is not part of the
-`bashdeps.bash` runtime dependency model and is not managed by `dependencies.txt`.
-Using bashdeps to bootstrap the filter that is needed only to document bashdeps
-would add an unnecessary self-hosting dependency.
+The downloaded filter is development tooling.  It SHALL be ignored by Git and is
+not part of the `bashdeps.bash` runtime dependency model or `dependencies.txt`.
+Using bashdeps to bootstrap the filter needed only to document bashdeps would add
+an unnecessary self-hosting dependency.
 
 ### Generated reference directory
 
@@ -131,18 +149,18 @@ Generated Doxygen output SHALL live under:
 doc/reference/
 ```
 
-The directory SHALL contain a hand-maintained `README.md` sentinel explaining
-that the remaining content is generated and is regenerated with:
+The complete directory SHALL be ignored by Git.
+
+No generated reference file, including a README sentinel, SHALL be required in the
+repository.  The maintained README, ADR-014, ADR-016, Makefile, and Doxyfile are
+the documentation-generation source surfaces.
+
+Generated files under `doc/reference/` SHALL NOT be edited manually.  They are
+regenerated from maintained source with:
 
 ```text
 make docs
 ```
-
-Generated files under `doc/reference/` SHALL NOT be edited manually.
-
-The generated HTML MAY be committed so it can be browsed directly from repository
-artifacts and reviewed alongside documentation changes.  The source comments and
-Doxyfile remain authoritative inputs; generated HTML is reproducible output.
 
 ### Documentation cleanup
 
@@ -152,26 +170,54 @@ The project SHALL provide:
 make docs-clean
 ```
 
-`docs-clean` SHALL remove generated contents beneath `doc/reference/` while
-preserving `doc/reference/README.md`.
+`docs-clean` SHALL remove the complete generated `doc/reference/` directory.
 
 Cleaning before every documentation generation prevents removed functions,
 renamed files, or obsolete pages from remaining in the output tree.
 
-### Documentation staging
+### GitHub Pages publication
 
-The project SHALL provide:
+The repository SHALL provide:
 
 ```text
-make docs-stage
+.github/workflows/static.yml
 ```
 
-`docs-stage` SHALL depend on `docs` and then stage the complete generated
-`doc/reference/` change set with Git.  This includes deletions so stale generated
-files are removed from a documentation update rather than remaining tracked.
+for GitHub Pages publication.
 
-The target is a convenience for maintainers.  It does not alter the requirement
-to review generated documentation before committing it.
+The workflow SHALL run on pushes to `main` and support manual
+`workflow_dispatch` execution.  It SHALL:
+
+1. check out the repository;
+2. install Doxygen;
+3. run `make docs`, thereby using the same generation path as local development;
+4. configure GitHub Pages;
+5. upload `doc/reference/` as the Pages artifact; and
+6. deploy that artifact to the `github-pages` environment.
+
+The workflow SHALL request only the permissions needed for repository checkout and
+Pages deployment:
+
+```text
+contents: read
+pages: write
+id-token: write
+```
+
+The Pages workflow SHALL use GitHub's Pages deployment concurrency group and SHALL
+NOT cancel an in-progress production deployment merely because a newer deployment
+was queued.
+
+Generated documentation SHALL exist only in the workflow workspace and the Pages
+artifact.  Publishing documentation SHALL NOT create source-control commits.
+
+### No documentation staging target
+
+The project SHALL NOT provide a `docs-stage` target in version 1.
+
+A staging target would imply that generated reference output belongs in source
+control.  Since Pages generates and publishes the documentation directly from
+maintained source, there is nothing generated that a maintainer should stage.
 
 ### Cleanup boundaries
 
@@ -183,7 +229,7 @@ make clean
 
 SHALL remain focused on ordinary build output under `dist/`.
 
-The project SHALL add:
+The project SHALL provide:
 
 ```text
 make distclean
@@ -208,6 +254,9 @@ documentation scaffolding.  This use of curl is independent of bashdeps' runtime
 downloader abstraction because it belongs to repository development tooling, not
 the shipped CLI.
 
+The Pages workflow SHALL install Doxygen explicitly rather than assuming the
+hosted runner image happens to contain it.
+
 ## Considered Alternatives
 
 ### Generate documentation directly from `dist/bashdeps.dev.bash`
@@ -224,13 +273,29 @@ separate upstream tool appear to be maintained bashdeps source.  The established
 Bootstrap and mktext pattern downloads the filter on demand, and bashdeps adopts
 that convention for consistency.
 
-### Ignore generated reference documentation
+### Commit generated Doxygen output
 
-Keeping HTML exclusively local would reduce repository churn, but it would also
-remove the `docs-stage` review workflow used by Bootstrap and make generated
-reference material less accessible to repository readers.  Version 1 therefore
-permits generated reference output to be committed while keeping it clearly
-identified as generated.
+Bootstrap's current Pages workflow uploads a repository-resident
+`doc/reference/` tree.  This works, but it duplicates reproducible output in Git
+and requires maintainers to remember to regenerate and commit it whenever source
+documentation changes.
+
+bashdeps instead generates the site in the Pages workflow from the exact source
+revision being deployed.  This keeps Git history focused on authoritative source
+while guaranteeing that published reference documentation corresponds to the
+committed `main` revision that triggered deployment.
+
+### Provide `docs-stage`
+
+A staging convenience is useful only when generated documentation is meant to be
+committed.  Under the selected Pages model it would encourage the wrong workflow,
+so it is intentionally omitted.
+
+### Publish a prebuilt documentation artifact from another workflow
+
+A separate validation workflow could build and retain the site for a later Pages
+job.  The project does not need that indirection in version 1.  The Pages workflow
+can invoke the canonical `make docs` target directly.
 
 ### Make `clean` remove all documentation tooling and output
 
@@ -243,18 +308,21 @@ operation explicitly.
 
 Documentation generation requires additional development tools and potentially a
 network download on first use.  It is intentionally opt-in through `make docs` and
-SHALL NOT become part of the ordinary build path.
+the Pages workflow and SHALL NOT become part of the ordinary build path.
 
 ## Consequences
 
-Contributors can generate browsable source reference documentation with one
-stable command shared conceptually with Bootstrap and mktext.
+Contributors can generate browsable source reference documentation locally with
+one stable command shared conceptually with Bootstrap and mktext.
 
 The repository gains a small development-tooling dependency on Doxygen and a
 locally downloaded Bash filter when documentation generation is requested.
 
-Generated documentation can be reviewed and committed without being mistaken for
-hand-maintained prose.
+Generated HTML, CSS, JavaScript, images, indexes, and related Doxygen files do not
+inflate repository history or require review as source changes.
+
+GitHub Pages always builds from the maintained source revision being deployed,
+reducing the chance of source/documentation drift.
 
 `make docs` begins from a clean generated-output directory, reducing stale-page
 risk.
@@ -266,9 +334,9 @@ Normal build, test, runtime, manifest, and release behavior remain unchanged.
 If the Bash Doxygen filter distribution model changes later, the local filter URL
 or acquisition policy may be revised without changing the public bashdeps CLI.
 
-A future CI decision may choose to regenerate or validate reference documentation,
-but version 1 does not require `make docs` to run as part of ordinary Tests,
-CodeQL, or release workflows.
+A future CI decision may add documentation validation to pull requests, but
+version 1 publishes Pages from `main` and does not make Doxygen generation part of
+the ordinary test or release workflows.
 
 ## Related Decisions
 
@@ -276,3 +344,4 @@ CodeQL, or release workflows.
 - Related to: ADR-010
 - Implements generated-reference follow-up from: ADR-014
 - Derived from: Bootstrap and mktext Doxygen/Make documentation scaffolding
+- Publication model informed by: Bootstrap `.github/workflows/static.yml`
