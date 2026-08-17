@@ -10,6 +10,7 @@ DEV_ARTIFACT := $(DIST_DIR)/bashdeps.dev.bash
 DEV_CHECKSUM := $(DEV_ARTIFACT).256
 DIST_ARTIFACT := $(DIST_DIR)/bashdeps.bash
 DIST_CHECKSUM := $(DIST_ARTIFACT).256
+LEGACY_CHECKSUMS := $(DIST_DIR)/SHA256SUMS
 
 TESTS_DIR := tests
 TEST_SCRIPTS := $(TESTS_DIR)/*.bats
@@ -26,6 +27,7 @@ all: build
 
 build: $(SOURCE)
 	mkdir -p "$(DIST_DIR)"
+	rm -f "$(LEGACY_CHECKSUMS)"
 	{ \
 		printf '%s\n' '#!/usr/bin/env bash'; \
 		printf '%s\n' '#'; \
@@ -97,6 +99,7 @@ test-dist: build
 	BASHDEPS_EXECUTABLE="$(DIST_ARTIFACT)" bats $(TEST_SCRIPTS)
 	BASHDEPS_EXECUTABLE="$$(pwd)/$(DIST_ARTIFACT)" bash "$(COMPAT_TEST)"
 	cd "$(DIST_DIR)" && if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "$(notdir $(DIST_CHECKSUM))"; else shasum -a 256 -c "$(notdir $(DIST_CHECKSUM))"; fi
+	test ! -e "$(LEGACY_CHECKSUMS)"
 
 clean:
 	rm -rf "$(DIST_DIR)"
