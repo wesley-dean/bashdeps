@@ -42,21 +42,91 @@ The conventional manifest filename is:
 dependencies.txt
 ```
 
-Each non-blank, non-comment line declares one artifact using named fields:
+Each logical record declares one artifact using named fields:
 
 ```text
 id=IDENTITY url=HTTPS_URL dest=RELATIVE_PATH digest=sha256:HEX_DIGEST
 ```
 
-For example:
+A logical record may occupy one physical line:
 
 ```text
 id=wesley-dean/mktext@0.0.7 url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash dest=vendor/mktext.bash digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
 ```
 
+or may be folded across indented continuation lines:
+
+```text
+id=wesley-dean/mktext@0.0.7
+  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash
+  dest=vendor/mktext.bash
+  digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
+```
+
+Those forms are semantically equivalent.
+
+### Physical-line folding
+
+Manifest physical lines are assembled into logical records before field
+tokenization.
+
+A blank line is ignored.
+
+A line whose first non-horizontal-whitespace character is `#` is ignored.
+
+A non-comment content line beginning in column 1 starts a new logical record.  If
+a prior logical record is being accumulated, that prior record is complete before
+the new one begins.
+
+A non-comment content line beginning with one or more spaces or tabs continues the
+current logical record.  Its leading horizontal whitespace is removed and the
+remaining text is appended to the logical record with exactly one ASCII space.
+
+Conceptually:
+
+```text
+foo
+  bar
+  bazzle
+```
+
+folds to:
+
+```text
+foo bar bazzle
+```
+
+A continuation line encountered before any logical record has started is an error.
+For example, this is invalid:
+
+```text
+  id=example@1
+  url=https://example.test/example
+```
+
+Comments and blank lines are semantically invisible and therefore do not terminate
+a logical record.  They may appear between continuation lines:
+
+```text
+id=example@1
+  url=https://example.test/example
+
+  # Keep this artifact under the default dependency tree.
+  dest=vendor/example
+  digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+The next non-comment content line determines whether the current record continues
+or a new record begins.
+
+Indentation has no meaning after record assembly.  It does not create sections,
+nesting, scopes, or prefixes and does not modify any field value.
+
+See ADR-015 for the line-folding rationale and complete physical-line rules.
+
 ### Record tokenization
 
-A manifest record is parsed in two stages.
+After physical-line folding, a logical manifest record is parsed in two stages.
 
 First, the record is split on horizontal whitespace into field tokens.
 Values therefore cannot contain literal spaces or tabs in version 1.
@@ -91,7 +161,9 @@ Each record requires exactly one of each field:
 - `dest`
 - `digest`
 
-Field order is irrelevant.
+Field order is irrelevant, including when fields occupy separate physical lines.
+Any valid field may begin a logical record in column 1; `id=` is not required to
+be physically first.
 
 Duplicate fields, missing fields, and unknown fields are errors.
 
@@ -104,7 +176,17 @@ Blank lines are ignored.
 
 A line whose first non-horizontal-whitespace character is `#` is ignored.
 
-Inline comments are not supported in version 1.
+Full-line comments may appear between physical lines of a folded logical record
+without terminating that record.
+
+Inline comments are not supported in version 1.  For example:
+
+```text
+id=example@1  # dependency identity
+```
+
+is invalid because `#` and the following text are parsed as ordinary record
+components rather than comment syntax.
 
 ### id
 
@@ -271,9 +353,11 @@ bashdeps.bash install [--dest-root PATH] id=... url=... dest=... digest=...
 
 `install` materializes one explicitly declared artifact.
 
-The CLI fields use the same grammar as one manifest record.  Callers invoking the
-command through a shell must quote arguments when ordinary shell syntax requires
-it; for example, a URL containing `&` should be passed as one quoted argument.
+The CLI fields use the same logical field grammar as one manifest record.  Physical
+line folding is a manifest-file feature and does not change ordinary shell argv
+parsing for `install`.  Callers invoking the command through a shell must quote
+arguments when ordinary shell syntax requires it; for example, a URL containing
+`&` should be passed as one quoted argument.
 
 If the existing destination is a valid ordinary file within the selected root
 whose SHA-256 digest already matches, `install` succeeds without network access or
@@ -303,7 +387,7 @@ The default manifest is `dependencies.txt` and the default destination root is
 `verify`:
 
 - validates the selected destination root;
-- parses and validates the complete manifest;
+- folds, parses, and validates the complete manifest;
 - rejects any declaration outside the selected destination root;
 - performs no network access;
 - intentionally performs no filesystem mutation;
@@ -328,7 +412,7 @@ The default manifest is `dependencies.txt` and the default destination root is
 It:
 
 1. validates the selected destination root;
-2. parses and validates the whole manifest;
+2. folds, parses, and validates the whole manifest;
 3. rejects any declaration outside the selected root;
 4. validates filesystem safety for every declared destination;
 5. hashes existing destinations;
@@ -463,6 +547,9 @@ The public exit status contract is:
 
 A malformed digest is status 2.  A syntactically valid declaration whose acquired
 candidate hashes differently is status 5.
+
+An invalid folded record, including a continuation line before any current logical
+record, is status 2.
 
 An invalid `--dest-root` value or a declaration outside the selected destination
 root is status 2 because the operation has not reached filesystem publication.
