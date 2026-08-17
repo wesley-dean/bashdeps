@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   versioning:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -26,6 +26,14 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Install validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bats shellcheck
+
+      - name: Validate distribution pipeline before versioning
+        run: make check test VERSION=0.0.0-ci
+
       - name: calculate version
         id: calculate-version
         uses: bitshifted/git-auto-semver@c4e8f005e839f822325356f141939cf6c76b5701 # pin@v1
@@ -33,6 +41,12 @@ jobs:
           create_tag: true
           initial_version: 0.0.1
           tag_prefix: v
+
+      - name: Build release artifacts
+        run: make build VERSION="${{ steps.calculate-version.outputs.version-string }}"
+
+      - name: Validate release artifacts
+        run: make test-dev test-dist VERSION="${{ steps.calculate-version.outputs.version-string }}"
 
       - name: Generate release notes
         id: release-notes
@@ -51,3 +65,7 @@ jobs:
           tag_name: "v${{ steps.calculate-version.outputs.version-string }}"
           draft: false
           prerelease: false
+          files: |
+            dist/bashdeps.dev.bash
+            dist/bashdeps.bash
+            dist/SHA256SUMS
