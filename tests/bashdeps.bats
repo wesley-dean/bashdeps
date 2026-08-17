@@ -32,6 +32,17 @@ setup() {
   [ "$(cat vendor/item.dat)" = 'approved bytes' ]
 }
 
+@test "blank lines comments and an empty manifest are valid" {
+  printf '%s\n' '' '   ' '# comment' $'\t# indented comment' >dependencies.txt
+
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 0 ]
+
+  : >dependencies.txt
+  run bash "$BASHDEPS_TEST_EXECUTABLE" sync
+  [ "$status" -eq 0 ]
+}
+
 @test "verify is network-free and accepts already-correct bytes" {
   mkdir -p vendor
   printf 'approved bytes\n' >vendor/item.dat
@@ -54,6 +65,18 @@ setup() {
   [ ! -e vendor ]
 }
 
+@test "verify ignores file mode when bytes are correct" {
+  mkdir -p vendor
+  printf 'approved bytes\n' >vendor/item.dat
+  chmod 0700 vendor/item.dat
+  digest=$(bashdeps_sha256_of vendor/item.dat)
+  printf 'id=item@1 url=https://example.test/item dest=vendor/item.dat digest=sha256:%s\n' "$digest" >dependencies.txt
+
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 0 ]
+  [ "$(stat -c '%a' vendor/item.dat)" = '700' ]
+}
+
 @test "unknown manifest fields fail closed" {
   digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   printf 'id=item@1 url=https://example.test/item dest=vendor/item.dat digest=sha256:%s mode=0755\n' "$digest" >dependencies.txt
@@ -63,11 +86,54 @@ setup() {
   [[ "$output" == *"unknown dependency field: mode"* ]]
 }
 
+@test "duplicate fields and missing required fields are rejected" {
+  digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  printf 'id=item@1 id=item@2 url=https://example.test/item dest=vendor/item digest=sha256:%s\n' "$digest" >dependencies.txt
+
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"duplicate id field"* ]]
+
+  printf 'id=item@1 url=https://example.test/item dest=vendor/item\n' >dependencies.txt
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"missing digest"* ]]
+}
+
+@test "invalid URL destination and digest declarations are rejected" {
+  digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  printf 'id=item@1 url=http://example.test/item dest=vendor/item digest=sha256:%s\n' "$digest" >dependencies.txt
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"non-HTTPS url"* ]]
+
+  printf 'id=item@1 url=https://example.test/item dest=../outside digest=sha256:%s\n' "$digest" >dependencies.txt
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid destination"* ]]
+
+  printf 'id=item@1 url=https://example.test/item dest=vendor/item digest=sha256:ABC\n' >dependencies.txt
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid digest"* ]]
+}
+
 @test "duplicate identities are rejected before acquisition" {
   digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   printf '%s\n' \
     "id=item@1 url=https://example.test/a dest=vendor/a digest=sha256:$digest" \
     "id=item@1 url=https://example.test/b dest=vendor/b digest=sha256:$digest" >dependencies.txt
+
+  run bash "$BASHDEPS_TEST_EXECUTABLE" sync
+  [ "$status" -eq 2 ]
+  [ ! -e vendor ]
+}
+
+@test "duplicate destinations are rejected before acquisition" {
+  digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  printf '%s\n' \
+    "id=one@1 url=https://example.test/a dest=vendor/shared digest=sha256:$digest" \
+    "id=two@1 url=https://example.test/b dest=vendor/shared digest=sha256:$digest" >dependencies.txt
 
   run bash "$BASHDEPS_TEST_EXECUTABLE" sync
   [ "$status" -eq 2 ]
@@ -90,6 +156,32 @@ setup() {
   [ "$status" -eq 5 ]
   [ ! -e vendor/one ]
   [ ! -e vendor/two ]
+}
+
+@test "sync preserves undeclared files" {
+  mkdir -p vendor
+  printf 'keep me\n' >vendor/extra
+  printf 'approved bytes\n' >payload
+  digest=$(bashdeps_sha256_of payload)
+  printf 'id=item@1 url=https://example.test/item dest=vendor/item digest=sha256:%s\n' "$digest" >dependencies.txt
+  bashdeps_make_mock_curl
+
+  run env PATH="$BASHDEPS_TEST_PROJECT/mock-bin:$PATH" MOCK_SOURCE="$BASHDEPS_TEST_PROJECT/payload" \
+    bash "$BASHDEPS_TEST_EXECUTABLE" sync
+  [ "$status" -eq 0 ]
+  [ "$(cat vendor/extra)" = 'keep me' ]
+}
+
+@test "newly published files use mode 0644" {
+  printf 'approved bytes\n' >payload
+  digest=$(bashdeps_sha256_of payload)
+  printf 'id=item@1 url=https://example.test/item dest=vendor/item digest=sha256:%s\n' "$digest" >dependencies.txt
+  bashdeps_make_mock_curl
+
+  run env PATH="$BASHDEPS_TEST_PROJECT/mock-bin:$PATH" MOCK_SOURCE="$BASHDEPS_TEST_PROJECT/payload" \
+    bash "$BASHDEPS_TEST_EXECUTABLE" sync
+  [ "$status" -eq 0 ]
+  [ "$(stat -c '%a' vendor/item)" = '644' ]
 }
 
 @test "symlinked destination parents fail closed" {
