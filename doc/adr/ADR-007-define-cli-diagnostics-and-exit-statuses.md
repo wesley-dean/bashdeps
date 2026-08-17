@@ -8,8 +8,8 @@ Proposed
 
 ## Intent and Documentation Posture
 
-This ADR defines the version 1 command surface, output channels, and stable exit
-status categories for `bashdeps`.
+This ADR defines the version 1 command surface, output channels, stable executable
+name, and exit status categories for `bashdeps`.
 
 ## Context
 
@@ -19,7 +19,8 @@ runtime capabilities, network failure, integrity failure, and filesystem failure
 without scraping prose diagnostics.
 
 ADR-003 defines `install`, `sync`, and `verify`.  The CLI also needs ordinary
-help and version behavior.
+help and version behavior.  ADR-009 defines the distributed executable artifact
+as `bashdeps.bash`, and ADR-013 adds the optional destination-root policy.
 
 ## Decision Drivers
 
@@ -28,17 +29,24 @@ help and version behavior.
 - Keep diagnostics separate from machine-consumable or informational output.
 - Provide stable failure categories without exposing private helper structure.
 - Distinguish an unsatisfied verification from malformed input or failed repair.
+- Make documentation match the actual executable filename consumers receive.
 
 ## Decision
+
+The version 1 public executable name SHALL be:
+
+```text
+bashdeps.bash
+```
 
 The version 1 public commands SHALL be:
 
 ```text
-bashdeps install KEY=VALUE...
-bashdeps sync [MANIFEST]
-bashdeps verify [MANIFEST]
-bashdeps help
-bashdeps version
+bashdeps.bash install [--dest-root PATH] KEY=VALUE...
+bashdeps.bash sync [--dest-root PATH] [MANIFEST]
+bashdeps.bash verify [--dest-root PATH] [MANIFEST]
+bashdeps.bash help
+bashdeps.bash version
 ```
 
 The option aliases `-h` and `--help` SHALL be equivalent to `help`.
@@ -50,11 +58,17 @@ The option `--version` SHALL be equivalent to `version`.
 by a manifest record.  It SHALL require exactly one each of `id`, `url`, `dest`,
 and `digest`, subject to ADR-002 validation.
 
+`install`, `sync`, and `verify` MAY receive `--dest-root PATH` in the position and
+with the semantics defined by ADR-013.  An invalid destination-root value or a
+declaration outside the selected root is invalid CLI/declaration policy.
+
 Normal successful `install`, `sync`, and `verify` operations SHOULD produce no
 standard output unless a later documented feature explicitly defines output.
-Diagnostics SHALL be written to standard error.
+Diagnostics SHALL be written to standard error and SHALL identify the program as
+`bashdeps.bash`.
 
-Explicit help and version requests SHALL write to standard output.
+Explicit help and version requests SHALL write to standard output.  Version output
+SHALL identify the program as `bashdeps.bash`.
 
 ### Exit statuses
 
@@ -63,7 +77,7 @@ Version 1 SHALL use these public status categories:
 ```text
 0  success, help, or version output
 1  verify completed but one or more declared destinations are absent or mismatched
-2  invalid CLI usage, invalid manifest, or invalid dependency declaration
+2  invalid CLI usage, invalid manifest, invalid dependency declaration, or invalid destination-root policy
 3  required runtime capability is unavailable or unusable
 4  network acquisition failed
 5  acquired candidate bytes do not match the approved digest
@@ -105,6 +119,14 @@ not dump the complete help text by default.
 
 ## Considered Alternatives
 
+### Use an extensionless `bashdeps` command name
+
+An extensionless command resembles a conventionally installed system utility, but
+the project distributes a standalone Bash artifact named `bashdeps.bash` for
+vendoring and bootstrap use.  Using the actual artifact filename in the public
+contract avoids requiring consumers to create an undocumented wrapper or rename
+the file before following examples.
+
 ### Return 1 for every failure
 
 This is conventional for small shell tools but would force Makefiles and CI
@@ -128,8 +150,8 @@ added without changing failure semantics.
 Make and CI integrations can branch on broad failure class while remaining
 independent of diagnostic wording.
 
-The exit status mapping becomes public API and should change only through a
-future architectural decision.
+The executable filename and exit status mapping become public API and should
+change only through a future architectural decision.
 
 A future `--quiet`, `--verbose`, or machine-readable reporting mode can build on
 this contract without redefining success and failure.
@@ -146,3 +168,5 @@ a demonstrated consumer needs them.
 - Related to: ADR-004
 - Related to: ADR-005
 - Related to: ADR-006
+- Related to: ADR-009
+- Related to: ADR-013
