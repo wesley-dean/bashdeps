@@ -20,11 +20,17 @@ with a demonstrated need.
 
 ## Context
 
-Several Bash projects need external build inputs such as released Bash scripts,
-filters, generators, or other repository-local artifacts.  Implementing download,
-verification, staging, cache validation, and error behavior independently in
-each Makefile duplicates security-sensitive logic and creates opportunities for
-those implementations to drift.
+Several projects need exact external inputs such as released Bash scripts,
+libraries, filters, generators, templates, data files, images, or other
+repository-local artifacts.  Implementing download, verification, staging,
+cache validation, and error behavior independently in each Makefile duplicates
+security-sensitive logic and creates opportunities for those implementations to
+drift.
+
+Although `bashdeps` is implemented in Bash and initially motivated by Bash
+projects, a managed dependency is an artifact rather than an executable unit.
+The tool does not assume that downloaded bytes are shell code, executable, or
+even textual.
 
 A concrete failure in `adrctl` demonstrated that the presence of a dependency at
 an expected filename does not establish that the expected version or bytes are
@@ -60,6 +66,7 @@ verification.
 - Keep the manifest readable by humans and straightforward for automation.
 - Keep the implementation small enough to audit as supply-chain-sensitive code.
 - Avoid arbitrary code execution while acquiring dependencies.
+- Avoid assuming that managed artifacts are executable Bash files.
 - Avoid accidental evolution into a general package manager.
 - Preserve deterministic behavior and explicit failure semantics.
 - Make security claims no stronger than the mechanism supports.
@@ -68,7 +75,7 @@ verification.
 ## Decision
 
 `bashdeps` SHALL be a deterministic external-artifact synchronization and
-verification tool for Bash-oriented projects.
+verification tool implemented in Bash.
 
 Its core responsibility SHALL be:
 
@@ -92,6 +99,14 @@ The project SHALL operate on exact dependency declarations.  It SHALL NOT resolv
 acceptable versions, discover newer versions, select among package candidates, or
 construct dependency graphs.
 
+A managed artifact MAY be executable code, source code, a library, a template, a
+data file, an image, or another ordinary file.  `bashdeps` SHALL NOT infer file
+purpose or executability from its identity, URL, destination name, or contents.
+File mode is therefore separate from byte identity and is not part of the
+version 1 manifest contract.  A later manifest version MAY add an explicit named
+field such as `mode=0775` if a demonstrated consumer requirement justifies that
+behavior.
+
 Every managed dependency SHALL have a committed SHA-256 digest.  The digest MAY
 be copied from an upstream-published checksum when an appropriate trusted checksum
 is available, or MAY be computed independently by the consuming project from the
@@ -99,9 +114,10 @@ exact artifact it intends to approve.  The absence of an upstream-published
 checksum SHALL NOT create an unverified or hash-optional manifest mode.
 
 SHA-256 verification establishes that local or downloaded bytes match the digest
-approved in the manifest.  It does not establish that the upstream software is
-safe, benevolent, free from vulnerabilities, correctly labeled, or semantically
-consistent with a version string in the dependency identity or URL.
+approved in the manifest.  It does not establish that the upstream software or
+other artifact is safe, benevolent, free from vulnerabilities, correctly
+labeled, or semantically consistent with a version string in the dependency
+identity or URL.
 
 The dependency identity field SHALL be metadata for humans and external
 automation.  The generic `bashdeps` implementation SHALL treat it as opaque except
@@ -147,7 +163,7 @@ operation performed.  In particular:
 - reproducibility of declared inputs does not imply offline availability;
 - staged multi-file publication may reduce predictable partial updates but does
   not imply filesystem-wide transactionality;
-- HTTPS transport does not establish that the retrieved software itself is
+- HTTPS transport does not establish that the retrieved artifact itself is
   trustworthy;
 - a valid manifest does not establish semantic agreement between dependency
   identity, URL naming, and artifact contents.
@@ -184,6 +200,16 @@ resolver, trust, compatibility, and lifecycle complexity.  Existing package
 managers already occupy that space.  `bashdeps` is intended to materialize exact
 approved artifacts, not select packages.
 
+### Limit managed artifacts to executable Bash files
+
+The initial consumers are Bash projects, so the tool could assume every managed
+artifact is executable shell code and apply executable permissions automatically.
+
+This was rejected because acquisition integrity is independent of artifact type.
+Templates, data files, images, source files, filters, and other build inputs
+benefit from the same exact-byte materialization model.  Avoiding an executability
+assumption also keeps the core behavior smaller and more generally useful.
+
 ### Keep dependency acquisition entirely in each consuming Makefile
 
 This avoids the bootstrap dependency on `bashdeps` itself.
@@ -213,10 +239,10 @@ A valid local artifact can be reused without network access after its digest is
 verified.  A mismatched artifact cannot be accepted merely because its filename
 or dependency identity looks correct.
 
-The core tool remains intentionally ignorant of package ecosystems and release
-semantics.  This reduces implementation complexity and keeps the trust boundary
-inspectable, but richer dependency-update behavior must live in external tooling
-or future integrations.
+The core tool remains intentionally ignorant of package ecosystems, release
+semantics, and artifact purpose.  This reduces implementation complexity and
+keeps the trust boundary inspectable, while allowing the same mechanism to
+materialize code and non-code files.
 
 Consumers still have a bootstrap responsibility for obtaining and verifying the
 `bashdeps` artifact itself.  The project must document that tradeoff explicitly
@@ -234,7 +260,7 @@ this ADR rather than being treated as incremental conveniences.
 Subsequent ADRs need to define:
 
 - the exact `dependencies.txt` grammar and validation rules;
-- synchronization and verification command semantics;
+- installation, synchronization, and verification command semantics;
 - staging and publication behavior;
 - URL, redirect, timeout, retry, and transport policy;
 - destination and symlink safety rules;
