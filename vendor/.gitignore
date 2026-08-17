@@ -1,0 +1,2 @@
+# Development-only Doxygen preprocessing filter.
+/doxygen-bash.awk
