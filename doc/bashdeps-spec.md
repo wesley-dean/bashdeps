@@ -75,10 +75,11 @@ A physical content line requests continuation only when it ends with a standalon
 be separated from the preceding field text by horizontal whitespace.  Spaces or
 tabs after the marker are invalid.
 
-When a continuation marker is present, bashdeps removes the marker, trims leading
-horizontal whitespace from the immediately following physical content line, and
-joins the fragments with exactly one ASCII space.  Repeated markers may continue
-the same logical record across additional physical lines.
+When a continuation marker is present, bashdeps removes the marker and its
+separating whitespace, trims leading horizontal whitespace from the immediately
+following physical content line, and joins the fragments with exactly one ASCII
+space.  Repeated markers may continue the same logical record across additional
+physical lines.
 
 Conceptually:
 
