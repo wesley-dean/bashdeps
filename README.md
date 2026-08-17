@@ -116,12 +116,58 @@ Version 1 accepts HTTPS URLs only.
 
 ### Destination
 
-`dest` is relative to the physical current working directory from which bashdeps
-is invoked.  Bashdeps does not discover a Git repository root and does not make
-destinations relative to the manifest file.
+`dest` is the complete project-relative destination path.  It is interpreted
+relative to the physical current working directory from which bashdeps is invoked.
+Bashdeps does not discover a Git repository root and does not make destinations
+relative to the manifest file.
 
-Absolute paths, traversal components, textual aliases such as `./path`, and
-existing symbolic-link path components are rejected.
+By default, destinations must be strictly beneath:
+
+```text
+vendor/
+```
+
+For example:
+
+```text
+dest=vendor/mktext.bash
+dest=vendor/templates/report.tmpl
+```
+
+The default policy rejects arbitrary project paths such as `Makefile`,
+`.github/workflows/build.yml`, `src/generated.bash`, and paths that merely share
+the textual prefix such as `vendor-old/item`.
+
+Projects with a legitimate alternate dependency tree may select one explicitly
+for the invocation:
+
+```bash
+bashdeps sync --dest-root assets dependencies.txt
+```
+
+A corresponding manifest still declares the complete destination:
+
+```text
+dest=assets/logo.png
+```
+
+`--dest-root` is a containment policy only.  It does not prepend, rewrite, or
+relocate `dest`.  Therefore `--dest-root assets` with `dest=vendor/tool.bash` is
+rejected rather than producing `assets/vendor/tool.bash`.
+
+A trailing slash on the option is harmless: `--dest-root vendor` and
+`--dest-root vendor/` are equivalent.
+
+Absolute paths, traversal components, textual aliases such as `./path`, repeated
+separators, and existing symbolic-link path components are rejected.  The
+selected destination root remains subject to the same project-relative and
+symlink-safety rules.
+
+Missing destination directories are created automatically when publication is
+required.  For `sync`, directory creation occurs only after all required
+candidates have been downloaded and SHA-256 verified successfully.
+
+See ADR-013 for the destination-root security boundary and rationale.
 
 ### Digest
 
@@ -135,6 +181,11 @@ The upstream project does not need to publish a checksum.  A consuming repositor
 can calculate the SHA-256 digest of the exact artifact it reviewed and commit that
 digest itself.
 
+When upstream does publish a SHA-256 checksum, that published value can be used as
+the committed `digest=` value.  Bashdeps still compares the downloaded bytes with
+the committed digest; it does not dynamically replace the trusted digest from a
+live upstream checksum during synchronization.
+
 ## Usage
 
 ### Install one artifact
@@ -145,6 +196,16 @@ bashdeps install \
   url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash \
   dest=vendor/mktext.bash \
   digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
+```
+
+For an alternate destination root:
+
+```bash
+bashdeps install --dest-root assets \
+  id=example@1 \
+  url=https://example.test/item.dat \
+  dest=assets/item.dat \
+  digest=sha256:...
 ```
 
 A manifest record deliberately resembles the field list passed to `install`.
@@ -168,12 +229,18 @@ downloading or replacing it.
 bashdeps sync
 ```
 
-This uses `dependencies.txt` by default.
+This uses `dependencies.txt` and the default destination root `vendor`.
 
 An alternate manifest can be supplied explicitly:
 
 ```bash
 bashdeps sync path/to/dependencies.txt
+```
+
+An alternate destination root is explicit invocation policy:
+
+```bash
+bashdeps sync --dest-root assets path/to/dependencies.txt
 ```
 
 `sync` validates the complete manifest, identifies missing or mismatched
@@ -195,11 +262,12 @@ or:
 
 ```bash
 bashdeps verify path/to/dependencies.txt
+bashdeps verify --dest-root assets path/to/dependencies.txt
 ```
 
 `verify` performs no network access and no intentional filesystem mutation.  It
-succeeds only when every declared destination exists and has the approved bytes.
-Extra undeclared files are ignored.
+succeeds only when every declared destination exists within the selected
+destination root and has the approved bytes.  Extra undeclared files are ignored.
 
 ## File Modes
 
@@ -225,6 +293,10 @@ The public exit status contract is:
 6  filesystem safety, staging, or publication failed
 ```
 
+An invalid `--dest-root` value or a destination outside the selected root is
+status 2 because it is invalid invocation/declaration policy rather than a
+publication failure.
+
 Diagnostics are written to standard error.  Successful `install`, `sync`, and
 `verify` operations normally produce no standard output.
 
@@ -238,6 +310,10 @@ The manifest itself is trusted source code.  A change that modifies both a URL
 and its approved digest intentionally changes which bytes the repository trusts
 and should receive the same review attention as other supply-chain-sensitive
 source changes.
+
+The default `vendor/` destination root limits where an ordinary manifest may
+materialize those trusted bytes.  A Makefile or CI change that supplies
+`--dest-root` changes that security policy and should also be review-worthy.
 
 Manifest contents are never sourced or evaluated as shell code.
 
@@ -260,6 +336,13 @@ make deps        bootstrap bashdeps if needed, then bashdeps sync
 make deps-check  bashdeps verify using an already-present bootstrap artifact
 make build       build only from current local inputs
 make all         deps, then build
+```
+
+A project using a non-default dependency tree should make that policy visible in
+its Makefile, for example:
+
+```text
+bashdeps sync --dest-root third_party dependencies.txt
 ```
 
 `deps-check` should fail rather than silently download a missing bashdeps
