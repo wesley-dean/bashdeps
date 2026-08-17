@@ -23,6 +23,8 @@ A public sourced API would freeze function names, variable names, shell-state
 behavior, error-return conventions, and namespace interactions that otherwise
 remain implementation details.
 
+ADR-007 and ADR-009 define the public executable filename as `bashdeps.bash`.
+
 ## Decision Drivers
 
 - Keep the public API as small as the demonstrated use case requires.
@@ -31,11 +33,12 @@ remain implementation details.
 - Keep Make and CI integration process-oriented and explicit.
 - Prevent technical sourceability from being mistaken for a supported library
   interface.
+- Make the interface name match the distributed executable artifact.
 
 ## Decision
 
-The supported public interface for version 1 SHALL be the executable CLI defined
-by ADR-007.
+The supported public interface for version 1 SHALL be the `bashdeps.bash`
+executable CLI defined by ADR-007.
 
 The project SHALL NOT document or guarantee a sourceable public Bash API.
 
@@ -47,7 +50,8 @@ Private functions and variables SHALL use the `__bashdeps_` namespace.
 
 Consumers SHALL NOT be expected to call `__bashdeps_*` functions or depend on
 private variable values.  Those names and signatures MAY change without being
-considered public API changes so long as documented CLI behavior remains stable.
+considered public API changes so long as documented `bashdeps.bash` CLI behavior
+remains stable.
 
 Direct execution SHALL dispatch when the artifact is invoked as a process.
 Sourcing SHALL leave the caller responsible for any resulting private definitions
@@ -71,14 +75,14 @@ long as no public sourced API is claimed.
 
 ## Consequences
 
-Implementation helpers remain free to evolve while tests focus primarily on CLI
-behavior.
+Implementation helpers remain free to evolve while tests focus primarily on the
+`bashdeps.bash` CLI behavior.
 
 Generated artifacts can still use ordinary Bash source structure and private
 functions without turning those helpers into consumer commitments.
 
-Consumers such as Makefiles invoke bashdeps as a process rather than sourcing it
-into their own shell state.
+Consumers such as Makefiles invoke `bashdeps.bash` as a process rather than
+sourcing it into their own shell state.
 
 ## Open Questions and Follow-Ups
 
