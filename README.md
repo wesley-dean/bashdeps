@@ -501,5 +501,5 @@ See [LICENSE](LICENSE).
 
 ## Contributing
 
-Contributions are welcome.  Please read [CONTRIBUTING.md`](CONTRIBUTING.md) and
+Contributions are welcome.  Please read [CONTRIBUTING.md](CONTRIBUTING.md) and
 follow the documented architecture and public behavior contract.
