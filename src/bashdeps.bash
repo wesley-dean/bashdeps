@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# bashdeps: materialize exact SHA-256-pinned external artifacts.
+# bashdeps.bash: materialize exact SHA-256-pinned external artifacts.
 #
 # The supported public interface is the executable CLI.  All functions and
 # variables below are private implementation details.
@@ -26,15 +26,15 @@ __bashdeps_dest_root='vendor'
 __bashdeps_usage() {
   printf '%s\n' \
     'Usage:' \
-    '  bashdeps install [--dest-root PATH] id=IDENTITY url=HTTPS_URL dest=RELATIVE_PATH digest=sha256:HEX' \
-    '  bashdeps sync [--dest-root PATH] [MANIFEST]' \
-    '  bashdeps verify [--dest-root PATH] [MANIFEST]' \
-    '  bashdeps help' \
-    '  bashdeps version'
+    '  bashdeps.bash install [--dest-root PATH] id=IDENTITY url=HTTPS_URL dest=RELATIVE_PATH digest=sha256:HEX' \
+    '  bashdeps.bash sync [--dest-root PATH] [MANIFEST]' \
+    '  bashdeps.bash verify [--dest-root PATH] [MANIFEST]' \
+    '  bashdeps.bash help' \
+    '  bashdeps.bash version'
 }
 
 __bashdeps_diag() {
-  printf 'bashdeps: %s\n' "$*" >&2
+  printf 'bashdeps.bash: %s\n' "$*" >&2
 }
 
 __bashdeps_reset_record() {
@@ -672,7 +672,7 @@ __bashdeps_cmd_verify() {
 }
 
 __bashdeps_cmd_version() {
-  printf 'bashdeps %s\n' "$__bashdeps_version"
+  printf 'bashdeps.bash %s\n' "$__bashdeps_version"
   printf 'build_date=%s\n' "$__bashdeps_build_date"
   printf 'commit=%s\n' "$__bashdeps_build_commit"
 }
