@@ -67,51 +67,37 @@ form remains valid:
 id=wesley-dean/mktext@0.0.7 url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash dest=vendor/mktext.bash digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
 ```
 
-For readability, the same logical record may be folded across indented physical
-lines:
+For readability, the same logical record may use explicit trailing continuation
+markers:
 
 ```text
-id=wesley-dean/mktext@0.0.7
-  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash
-  dest=vendor/mktext.bash
+id=wesley-dean/mktext@0.0.7 \
+  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash \
+  dest=vendor/mktext.bash \
   digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
 ```
 
 Those two forms mean exactly the same thing.
 
-A non-comment content line beginning in column 1 starts a logical record.  A
-non-comment content line beginning with one or more spaces or tabs continues the
-current record.  Continuation indentation is removed and the text is joined to
-the logical record with one ASCII space before normal field parsing.
+A standalone `\` at the end of a physical content line means that the very next
+physical line continues the same logical record.  The marker is removed, leading
+horizontal whitespace on the next line is ignored for presentation, and the two
+fragments are joined with one ASCII space before normal field parsing.
 
-Conceptually:
+Indentation by itself has no semantic meaning.  This avoids accidental whitespace
+changes joining records that the author did not explicitly continue.
 
-```text
-foo
-  bar
-  bazzle
-```
+The continuation marker must be the final character before the newline and must
+be separated from the preceding field text by horizontal whitespace.  Trailing
+spaces after `\` are invalid.
 
-becomes:
+Blank lines and full-line comments are ignored outside a continuation.  After a
+trailing continuation marker, however, the next physical line must contain record
+content.  A blank line, comment line, or end of file at that point makes the
+manifest invalid.
 
-```text
-foo bar bazzle
-```
-
-A continuation line with no preceding logical record is invalid rather than being
-silently repaired.
-
-Blank lines and full-line comments are ignored and do not terminate a folded
-record.  This is valid:
-
-```text
-id=wesley-dean/mktext@0.0.7
-  url=https://example.test/mktext.bash
-
-  # Keep mktext under the default dependency tree.
-  dest=vendor/mktext.bash
-  digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
-```
+The `\` marker is only a bashdeps manifest convention.  It does not introduce
+Bash escaping, quoting, expansion, or evaluation semantics.
 
 Inline comments are not supported.
 
@@ -124,9 +110,8 @@ dest=
 digest=
 ```
 
-Field order is irrelevant, including across folded physical lines.  `id=` does not
-have to be the first physical field; any valid field may begin the logical record
-in column 1.
+Field order is irrelevant, including across continued physical lines.  `id=` does
+not have to be the first field.
 
 After folding, records are split on horizontal whitespace into field tokens.  Each
 field token is then split only at its first `=`.  Additional equals signs remain
@@ -144,7 +129,7 @@ field such as `mode=0775` can therefore be introduced deliberately without
 changing the basic record shape.
 
 See ADR-015 for the physical-line folding rules and why bashdeps retains its named
-field grammar instead of adopting an INI-style format.
+field grammar instead of adopting indentation-sensitive or INI-style syntax.
 
 ### Identity
 
@@ -255,8 +240,10 @@ bashdeps.bash install --dest-root assets \
 ```
 
 A manifest record deliberately resembles the field list passed to `install`.
-Physical-line folding applies to manifest files; interactive `install` arguments
-continue to follow ordinary shell argv and quoting rules.  For example:
+Manifest continuation is separate from Bash command continuation: when a shell
+command uses its own `\`-newline syntax, the shell processes that before bashdeps
+receives argv.  Bashdeps applies ADR-015 folding only while reading manifest
+files.  For example:
 
 ```bash
 bashdeps.bash install \
@@ -339,8 +326,8 @@ The public exit status contract is:
 6  filesystem safety, staging, or publication failed
 ```
 
-An invalid folded record, including a continuation before any current logical
-record, is status 2.
+A malformed or unterminated continuation is status 2, including a blank/comment
+line where a trailing `\` requires immediate continued record content.
 
 An invalid `--dest-root` value or a destination outside the selected root is
 status 2 because it is invalid invocation/declaration policy rather than a
