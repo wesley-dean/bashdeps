@@ -9,13 +9,13 @@ setup() {
 @test "help and version expose the public CLI" {
   run bash "$BASHDEPS_TEST_EXECUTABLE" --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"bashdeps install"* ]]
-  [[ "$output" == *"bashdeps sync [--dest-root PATH] [MANIFEST]"* ]]
+  [[ "$output" == *"bashdeps.bash install"* ]]
+  [[ "$output" == *"bashdeps.bash sync [--dest-root PATH] [MANIFEST]"* ]]
   [[ "$output" == *"--dest-root PATH"* ]]
 
   run bash "$BASHDEPS_TEST_EXECUTABLE" --version
   [ "$status" -eq 0 ]
-  [[ "$output" == bashdeps\ * ]]
+  [[ "$output" == bashdeps.bash\ * ]]
   [[ "$output" == *$'\n'build_date=* ]]
   [[ "$output" == *$'\n'commit=* ]]
 }
