@@ -136,4 +136,3 @@ clean:
 #
 distclean: clean docs-clean
 	$(RM) -f "$(DOXYGEN_BASH_FILTER)"
-	-rmdir "$(VENDOR_DIR)" >/dev/null 2>&1
