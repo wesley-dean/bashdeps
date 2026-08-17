@@ -158,6 +158,20 @@ setup() {
   [ ! -e vendor/two ]
 }
 
+@test "failed acquisition preserves existing stale bytes" {
+  mkdir -p vendor
+  printf 'stale bytes\n' >vendor/item
+  printf 'approved bytes\n' >approved
+  digest=$(bashdeps_sha256_of approved)
+  printf 'id=item@1 url=https://example.test/item dest=vendor/item digest=sha256:%s\n' "$digest" >dependencies.txt
+  bashdeps_make_mock_curl
+
+  run env PATH="$BASHDEPS_TEST_PROJECT/mock-bin:$PATH" MOCK_SOURCE="$BASHDEPS_TEST_PROJECT/does-not-exist" \
+    bash "$BASHDEPS_TEST_EXECUTABLE" sync
+  [ "$status" -eq 4 ]
+  [ "$(cat vendor/item)" = 'stale bytes' ]
+}
+
 @test "sync preserves undeclared files" {
   mkdir -p vendor
   printf 'keep me\n' >vendor/extra
@@ -198,6 +212,18 @@ setup() {
   [ ! -e outside/item ]
 }
 
+@test "symlinked final destinations fail closed" {
+  mkdir -p vendor outside
+  printf 'outside bytes\n' >outside/item
+  ln -s "$BASHDEPS_TEST_PROJECT/outside/item" vendor/item
+  digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  printf 'id=item@1 url=https://example.test/item dest=vendor/item digest=sha256:%s\n' "$digest" >dependencies.txt
+
+  run bash "$BASHDEPS_TEST_EXECUTABLE" sync
+  [ "$status" -eq 6 ]
+  [ "$(cat outside/item)" = 'outside bytes' ]
+}
+
 @test "wget is used when curl is unavailable" {
   printf 'approved bytes\n' >payload
   digest=$(bashdeps_sha256_of payload)
@@ -209,6 +235,28 @@ setup() {
     /bin/bash "$BASHDEPS_TEST_EXECUTABLE" sync
   [ "$status" -eq 0 ]
   [ "$(cat vendor/item)" = 'approved bytes' ]
+}
+
+@test "shasum is used when sha256sum is unavailable" {
+  mkdir -p vendor
+  printf 'approved bytes\n' >vendor/item
+  digest=$(bashdeps_sha256_of vendor/item)
+  printf 'id=item@1 url=https://example.test/item dest=vendor/item digest=sha256:%s\n' "$digest" >dependencies.txt
+  bashdeps_make_mock_shasum_path
+
+  run env PATH="$BASHDEPS_TEST_PROJECT/isolated-bin" /bin/bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 0 ]
+}
+
+@test "missing hash backend is status 3 when hashing is required" {
+  mkdir -p vendor
+  printf 'approved bytes\n' >vendor/item
+  digest=$(bashdeps_sha256_of vendor/item)
+  printf 'id=item@1 url=https://example.test/item dest=vendor/item digest=sha256:%s\n' "$digest" >dependencies.txt
+  bashdeps_make_base_isolated_path
+
+  run env PATH="$BASHDEPS_TEST_PROJECT/isolated-bin" /bin/bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 3 ]
 }
 
 @test "a satisfied sync does not require a downloader" {
