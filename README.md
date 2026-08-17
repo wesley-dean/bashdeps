@@ -60,11 +60,60 @@ required bytes already match.
 
 The conventional manifest filename is `dependencies.txt`.
 
-Each dependency occupies one line and uses named fields:
+Each dependency is one logical record using named fields.  The compact one-line
+form remains valid:
 
 ```text
 id=wesley-dean/mktext@0.0.7 url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash dest=vendor/mktext.bash digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
 ```
+
+For readability, the same logical record may be folded across indented physical
+lines:
+
+```text
+id=wesley-dean/mktext@0.0.7
+  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash
+  dest=vendor/mktext.bash
+  digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
+```
+
+Those two forms mean exactly the same thing.
+
+A non-comment content line beginning in column 1 starts a logical record.  A
+non-comment content line beginning with one or more spaces or tabs continues the
+current record.  Continuation indentation is removed and the text is joined to
+the logical record with one ASCII space before normal field parsing.
+
+Conceptually:
+
+```text
+foo
+  bar
+  bazzle
+```
+
+becomes:
+
+```text
+foo bar bazzle
+```
+
+A continuation line with no preceding logical record is invalid rather than being
+silently repaired.
+
+Blank lines and full-line comments are ignored and do not terminate a folded
+record.  This is valid:
+
+```text
+id=wesley-dean/mktext@0.0.7
+  url=https://example.test/mktext.bash
+
+  # Keep mktext under the default dependency tree.
+  dest=vendor/mktext.bash
+  digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
+```
+
+Inline comments are not supported.
 
 The required fields are:
 
@@ -75,11 +124,13 @@ dest=
 digest=
 ```
 
-Field order is irrelevant.
+Field order is irrelevant, including across folded physical lines.  `id=` does not
+have to be the first physical field; any valid field may begin the logical record
+in column 1.
 
-Records are split on horizontal whitespace into field tokens.  Each field token
-is then split only at its first `=`.  Additional equals signs remain part of the
-value, so URLs such as this are unambiguous:
+After folding, records are split on horizontal whitespace into field tokens.  Each
+field token is then split only at its first `=`.  Additional equals signs remain
+part of the value, so URLs such as this are unambiguous:
 
 ```text
 url=https://example.test/download?first=1&second=2
@@ -87,19 +138,13 @@ url=https://example.test/download?first=1&second=2
 
 Values cannot contain literal spaces or tabs in version 1.
 
-Blank lines and full-line comments are ignored:
-
-```text
-# Rendering dependency
-id=wesley-dean/mktext@0.0.7 url=https://example.test/mktext.bash dest=vendor/mktext.bash digest=sha256:...
-```
-
-Inline comments are not supported.
-
 Unknown fields fail closed.  This makes the named-field format extensible without
 allowing an older bashdeps version to silently ignore newer semantics.  A future
 field such as `mode=0775` can therefore be introduced deliberately without
 changing the basic record shape.
+
+See ADR-015 for the physical-line folding rules and why bashdeps retains its named
+field grammar instead of adopting an INI-style format.
 
 ### Identity
 
@@ -210,8 +255,8 @@ bashdeps.bash install --dest-root assets \
 ```
 
 A manifest record deliberately resembles the field list passed to `install`.
-When an interactive shell would interpret characters inside a value, quote that
-argument normally.  For example:
+Physical-line folding applies to manifest files; interactive `install` arguments
+continue to follow ordinary shell argv and quoting rules.  For example:
 
 ```bash
 bashdeps.bash install \
@@ -248,8 +293,8 @@ bashdeps.bash sync --dest-root assets path/to/dependencies.txt
 artifacts, acquires and verifies every required candidate, and only then begins
 intentional publication.
 
-It does not literally invoke `install` once per line because doing so would lose
-whole-manifest preflight.
+It does not literally invoke `install` once per logical record because doing so
+would lose whole-manifest preflight.
 
 Bashdeps does not prune undeclared files.
 
@@ -293,6 +338,9 @@ The public exit status contract is:
 5  acquired candidate bytes do not match the approved digest
 6  filesystem safety, staging, or publication failed
 ```
+
+An invalid folded record, including a continuation before any current logical
+record, is status 2.
 
 An invalid `--dest-root` value or a destination outside the selected root is
 status 2 because it is invalid invocation/declaration policy rather than a
