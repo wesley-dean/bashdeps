@@ -14,12 +14,12 @@ represent one logical dependency record across multiple physical lines.
 ADR-002 remains authoritative for the named `KEY=VALUE` record grammar.  This ADR
 does not change field names, field ordering, field validation, tokenization,
 digest requirements, destination policy, or the rule that manifest data is never
-sourced or evaluated.  It adds a small preprocessing step that folds indented
-physical continuation lines into the same logical record before ADR-002 field
-parsing begins.
+sourced or evaluated.  It adds one explicit physical-line continuation marker
+that is processed before ADR-002 field parsing begins.
 
-The goal is to improve human readability without replacing the deliberately small
-manifest grammar with a hierarchical configuration language.
+The goal is to improve human readability without making indentation semantic and
+without replacing the deliberately small manifest grammar with a hierarchical
+configuration language.
 
 ## Context
 
@@ -33,36 +33,43 @@ That representation is deterministic and easy to parse, but realistic URLs and
 SHA-256 digests make individual physical lines long.  Long records are harder to
 scan in reviews and make adjacent fields visually blend together.
 
-A more readable representation is:
+The project first considered indentation-based folding, where an indented
+physical line would continue the preceding logical record.  That approach was
+readable, but it assigned semantic meaning to whitespace and allowed accidental
+indentation to change record boundaries.
+
+The project therefore chose an explicit trailing backslash continuation marker,
+which is already familiar to Bash and Unix users:
 
 ```text
-id=wesley-dean/mktext@0.0.7
-  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash
-  dest=vendor/mktext.bash
+id=wesley-dean/mktext@0.0.7 \
+  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash \
+  dest=vendor/mktext.bash \
   digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
 ```
 
-This should remain semantically identical to:
+This representation is semantically identical to:
 
 ```text
 id=wesley-dean/mktext@0.0.7 url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash dest=vendor/mktext.bash digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
 ```
 
-The project considered moving to an INI-like structure, but doing so would create
-a materially larger grammar and force decisions about sections, duplicate keys,
-section identity, quoting, escaping, comments, continuation behavior, and parser
-compatibility.  Physical-line folding provides the desired readability while
-preserving the already-defined logical record grammar.
+The project also considered moving to an INI-like structure, but doing so would
+create a materially larger grammar and force decisions about sections, duplicate
+keys, section identity, quoting, escaping, comments, continuation behavior, and
+parser compatibility.  Explicit continuation provides the desired readability
+while preserving the already-defined logical record grammar.
 
 ## Decision Drivers
 
 - Improve manifest readability during ordinary review.
 - Preserve the named-field grammar from ADR-002.
+- Make continuation explicit rather than indentation-sensitive.
+- Use a convention familiar to Bash and Unix developers.
 - Keep manifest parsing deterministic and inspectable in Bash.
 - Avoid introducing a general-purpose configuration parser.
-- Give indentation exactly one narrow meaning.
-- Keep comments and blank lines semantically inert.
-- Fail closed when indentation cannot be associated with an existing record.
+- Keep indentation cosmetic.
+- Fail closed when a requested continuation is incomplete or malformed.
 - Preserve field-order independence.
 - Preserve the rule that field values cannot contain literal horizontal whitespace.
 - Keep future external tooling able to reason about stable `KEY=VALUE` fields.
@@ -73,317 +80,287 @@ Version 1 manifests SHALL distinguish physical lines from logical records.
 
 A logical record MAY occupy one physical line or multiple physical lines.
 
-Line folding SHALL occur before the logical record is tokenized into fields.
+Physical-line folding SHALL occur before the logical record is tokenized into
+fields.
 
-### Physical-line classification
+### Continuation marker
 
-Each physical line SHALL be classified in this order:
+A physical content line requests continuation only when it ends with a standalone
+backslash continuation marker.
 
-1. A blank line contains only zero or more horizontal whitespace characters and
-   SHALL be ignored.
-2. A comment line is a line whose first non-horizontal-whitespace character is
-   `#` and SHALL be ignored.
-3. A non-comment content line beginning in column 1 SHALL begin a new logical
-   record.
-4. A non-comment content line beginning with one or more horizontal whitespace
-   characters SHALL continue the current logical record.
+The continuation marker SHALL:
 
-For this ADR, horizontal whitespace means spaces or tabs.
+- be the final non-newline character on the physical line;
+- be preceded by at least one horizontal whitespace character; and
+- consist of one literal `\` character.
 
-Comments and blank lines are semantically invisible.  They neither begin a record
-nor terminate the current record.
-
-### Starting a logical record
-
-A non-comment content line whose first character is not horizontal whitespace
-SHALL start a new logical record.
-
-If another logical record is already being accumulated, that previous record
-SHALL be considered complete before the new record begins.
+No spaces or tabs may follow the marker before the newline.
 
 For example:
 
 ```text
-id=one@1
-  url=https://example.test/one
-  dest=vendor/one
+id=example@1 \
+  url=https://example.test/example \
+  dest=vendor/example \
   digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-id=two@1
-  url=https://example.test/two
-  dest=vendor/two
-  digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 ```
 
-contains two logical records.
+is a four-physical-line representation of one logical record.
 
-### Continuing a logical record
+A backslash that is part of field data and is not a standalone trailing marker
+has no continuation meaning.
 
-A non-comment content line beginning with one or more spaces or tabs SHALL be a
-continuation line.
+The continuation marker is a bashdeps manifest lexical convention only.  It does
+not enable Bash escaping, quoting, command parsing, parameter expansion, or any
+other shell evaluation behavior.
 
-The leading horizontal whitespace SHALL be removed from the continuation text.
-The remaining continuation text SHALL be appended to the current logical record
-with exactly one ASCII space between the existing logical text and the appended
-text.
+### Folding behavior
 
-Therefore:
+When a physical line ends with the continuation marker, bashdeps SHALL:
+
+1. remove the horizontal whitespace immediately separating the marker from the
+   preceding content as needed to remove the marker cleanly;
+2. remove the marker itself;
+3. require another physical content line immediately after it;
+4. remove leading horizontal whitespace from that next content line for folding
+   purposes; and
+5. append the next line's content to the accumulated logical record using exactly
+   one ASCII space between the two physical-line fragments.
+
+If the next physical line also ends with a continuation marker, folding SHALL
+continue recursively until a physical content line without a continuation marker
+completes the logical record.
+
+Conceptually:
 
 ```text
-foo
-  bar
+foo \
+  bar \
   bazzle
-```
-
-folds conceptually to:
-
-```text
-foo bar bazzle
-```
-
-For a valid bashdeps declaration:
-
-```text
-id=example@1
-  url=https://example.test/example
-  dest=vendor/example
-  digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
 
 folds to:
 
 ```text
-id=example@1 url=https://example.test/example dest=vendor/example digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+foo bar bazzle
 ```
 
-The resulting logical text is then parsed exactly as ADR-002 specifies.
+After folding, the resulting logical record SHALL be parsed exactly as ADR-002
+specifies.
 
-### Continuation without a current record
+### Indentation is not semantic
 
-A continuation line encountered before any logical record has started SHALL make
-the manifest invalid.
+Leading spaces or tabs on a physical content line SHALL NOT by themselves imply
+continuation.
+
+Continuation exists only because the immediately preceding physical content line
+ended with the explicit continuation marker.
 
 For example:
 
 ```text
-  id=example@1
-  url=https://example.test/example
-```
-
-is invalid because the first physical content line is indented and therefore
-claims to continue a record that does not exist.
-
-The parser SHALL fail rather than guessing that the indentation was accidental.
-
-### Comments and blank lines within a folded record
-
-Because comments and blank lines are ignored before folding semantics are applied,
-they MAY appear between physical lines belonging to the same logical record.
-
-For example:
-
-```text
-id=example@1
-  url=https://example.test/example
-
-  # Keep the artifact under the default dependency tree.
-  dest=vendor/example
-  digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-```
-
-is semantically equivalent to:
-
-```text
-id=example@1 url=https://example.test/example dest=vendor/example digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-```
-
-A comment or blank line does not terminate a record.  The next non-comment
-physical content line determines whether the record continues or a new record
-begins.
-
-### Inline comments remain unsupported
-
-This ADR does not add inline comments.
-
-For example:
-
-```text
-id=example@1  # dependency identity
-```
-
-remains invalid under ADR-002 because, after folding, `#` and the following words
-would be parsed as ordinary whitespace-delimited components rather than comment
-syntax.
-
-### Field grammar remains unchanged
-
-After physical-line folding, the logical record SHALL continue to use the ADR-002
-rules:
-
-- fields are separated by one or more horizontal whitespace characters;
-- each field token is split at the first `=` only;
-- field order is irrelevant;
-- `id`, `url`, `dest`, and `digest` are each required exactly once;
-- duplicate, missing, and unknown fields fail closed;
-- values cannot contain literal spaces or tabs;
-- manifest content is never sourced, evaluated, or shell-expanded.
-
-Indentation therefore affects record assembly only.  It does not create nested
-objects, scopes, sections, or field ownership beyond continuation of the preceding
-logical record.
-
-### Diagnostics and source locations
-
-When reporting an invalid logical record, implementations SHOULD identify the
-physical line on which that logical record began.
-
-When reporting a continuation line that has no preceding logical record,
-implementations SHOULD identify the physical continuation line itself.
-
-This preserves useful diagnostics even though one parsed record may span several
-physical lines.
-
-## Examples
-
-### Single-line form
-
-```text
-id=example@1 url=https://example.test/example dest=vendor/example digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-```
-
-### Folded form
-
-```text
-id=example@1
-  url=https://example.test/example
-  dest=vendor/example
-  digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-```
-
-The two forms are semantically equivalent.
-
-### Field order remains irrelevant
-
-```text
-url=https://example.test/example
-  digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-  id=example@1
-  dest=vendor/example
-```
-
-is valid because the unindented `url=` line begins the logical record and the
-remaining indented lines continue it.  ADR-002 still makes field order irrelevant.
-
-### Multiple records separated by comments
-
-```text
-# First dependency
 id=one@1
-  url=https://example.test/one
-  dest=vendor/one
-  digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-
-# Second dependency
-id=two@1
-  url=https://example.test/two
-  dest=vendor/two
-  digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  id=two@1
 ```
 
-contains two logical records.
+contains two physical records, not one folded record.  Each record is then
+validated independently and will ordinarily fail because each declaration is
+incomplete.
+
+This fail-closed behavior is intentional.  Accidental indentation cannot silently
+change the logical dependency being declared.
+
+Indentation on the physical line following a continuation marker is cosmetic and
+is removed before joining the fragments.  Authors may therefore align continued
+fields for readability without changing manifest meaning.
+
+### Blank lines and comments
+
+Outside an active continuation, ADR-002's existing rules remain unchanged:
+
+- blank lines are ignored;
+- lines whose first non-horizontal-whitespace character is `#` are ignored; and
+- inline comments are unsupported.
+
+Inside an active continuation, the next physical line SHALL contain record
+content.  A blank line or full-line comment immediately after a trailing
+continuation marker SHALL make the manifest invalid.
+
+For example, this is invalid:
+
+```text
+id=example@1 \
+  # explanation inserted inside a continuation
+  url=https://example.test/example
+```
+
+and this is also invalid:
+
+```text
+id=example@1 \
+
+  url=https://example.test/example
+```
+
+The strict rule keeps continuation local and obvious: a trailing `\` means the
+very next physical line continues the same logical record.
+
+Comments that explain a dependency SHOULD therefore appear before the record:
+
+```text
+# Rendering dependency used by the documentation build.
+id=example@1 \
+  url=https://example.test/example \
+  dest=vendor/example \
+  digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+### End-of-file handling
+
+A manifest SHALL be invalid when the final physical line ends with a continuation
+marker and no following physical content line exists.
+
+Bashdeps SHALL fail rather than silently treating an unterminated continuation as
+a complete logical record.
+
+### Field semantics after folding
+
+Folding SHALL NOT introduce spaces into field values.
+
+The inserted ASCII space separates field tokens in the same way that horizontal
+whitespace separates them in an ordinary one-line record.
+
+For example:
+
+```text
+url=https://example.test/download?first=1&second=2 \
+  id=example@1 \
+  digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  dest=vendor/example
+```
+
+folds to a valid logical record.  The additional `=` characters inside the URL
+remain literal field data because ADR-002 still splits each field token only at
+its first `=`.
+
+Field order remains irrelevant.
+
+### Relationship to `bashdeps.bash install`
+
+Physical-line continuation is a manifest-file feature.
+
+It does not change the argv contract of `bashdeps.bash install`.  When a user
+writes a shell command across lines using Bash's own `\`-newline behavior, the
+interactive or calling shell processes that syntax before bashdeps receives its
+arguments.  bashdeps does not apply manifest folding to CLI arguments.
+
+This distinction prevents the manifest format from becoming an alternate shell
+parser.
+
+## Parsing Model
+
+Conceptually, manifest processing now has three stages:
+
+1. classify blank/comment lines and fold explicit physical-line continuations;
+2. split each completed logical record on horizontal whitespace into field tokens;
+3. split each token at its first `=` and apply ADR-002 validation.
+
+An implementation may perform these operations in one streaming pass.  The stages
+above define semantics, not a requirement to allocate a transformed intermediate
+manifest.
+
+At no stage may manifest content be sourced, evaluated, or shell-expanded.
 
 ## Considered Alternatives
 
-### Keep every dependency on one physical line
+### Indentation-based continuation
 
-This preserves the smallest parser, but long URLs and SHA-256 values make records
-difficult to scan.  The project accepts the small folding step because it improves
-human review without changing the logical grammar.
+The project initially documented a rule where any indented content line continued
+the preceding record.  That representation was compact and readable, but it made
+indentation semantically significant and allowed accidental whitespace changes to
+alter record boundaries.
+
+Explicit trailing `\` continuation was chosen because it requires the author to
+state continuation intent directly while leaving indentation cosmetic.
 
 ### INI-style sections
 
-An INI-like representation could be readable, for example:
+An INI-like format could represent a dependency as a section with one key per
+line.  INI, however, is a family of related conventions rather than one precise
+portable grammar.  bashdeps would need to define section identity, duplicate
+sections, duplicate keys, whitespace trimming, comments, quoting, escaping,
+continuation, and empty-value behavior.
 
-```ini
-[example@1]
-url=https://example.test/example
-dest=vendor/example
-digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-```
+That complexity does not improve the trust model.  Explicit folding provides the
+needed readability while retaining the smaller existing grammar.
 
-This was rejected for version 1 because INI is not one rigorously universal
-format.  bashdeps would need to define section identity, duplicate-section
-behavior, duplicate-key behavior, whitespace normalization, comment forms,
-quoting, escaping, empty values, continuation behavior, and potentially section
-ordering.  The resulting parser and specification would be larger than the data
-model requires.
+### Backslash as general escape syntax
 
-### Treat indentation as a prefix to `dest` or another hierarchy
+Treating `\` as a general escape character would introduce another grammar layer
+and invite Bash-like expectations around quoting and escaping.  Version 1 assigns
+backslash exactly one special role: a standalone trailing continuation marker.
+Every other backslash is ordinary data subject to the field-specific grammar.
 
-This was rejected because indentation should have one narrow syntactic meaning:
-continuation of the preceding logical record.  It does not create nested data or
-change any field value.
+### Silently skip comments or blank lines during continuation
 
-### Require `id=` to be the first physical line
+Skipping semantically empty lines while a continuation is open could make long
+records more permissive, but it weakens the direct relationship between a trailing
+marker and the physical line it promises to continue onto.  Version 1 therefore
+requires actual record content immediately after every continuation marker.
 
-This could make records visually uniform, but ADR-002 deliberately makes field
-order irrelevant.  Folding should not introduce a new positional requirement.
-Any valid field may begin a logical record in column 1.
+### Keep one physical line per dependency
 
-### Make blank lines terminate records
-
-This would make visual spacing semantically significant and would prevent comments
-or blank lines from being inserted inside a folded record.  Blank lines remain
-inert instead; the next content line's indentation determines whether it continues
-or starts a record.
-
-### Support inline comments while adding folding
-
-Inline comments remain ambiguous in an unquoted whitespace-delimited field grammar
-and are unrelated to the readability problem folding solves.  They remain outside
-version 1.
+This remains valid and is the smallest representation, but it makes realistic
+records unnecessarily difficult to scan.  The chosen rule preserves one-line
+compatibility while adding an explicit readable form.
 
 ## Consequences
 
-Manifest authors may choose compact one-line records or readable folded records
-without changing dependency semantics.
+Existing one-line manifests remain valid and unchanged.
 
-The parser gains a small physical-line assembly phase before existing field
-parsing.
+Authors may format long declarations across several physical lines without
+changing the logical field grammar.
 
-Indentation becomes significant only at the beginning of non-comment physical
-lines.  Accidental indentation at the start of a new record fails closed rather
-than being silently repaired.
+Indentation becomes presentation only and cannot accidentally join records.
 
-Comments and blank lines can be inserted freely without terminating a record,
-which keeps annotation and visual spacing separate from dependency semantics.
+The parser gains one small state machine: it must track whether the preceding
+physical line explicitly requested continuation.
 
-Existing one-line manifests remain valid without modification.
+Malformed or unterminated continuations fail closed as manifest errors.
 
-External tools that already reason about logical `KEY=VALUE` records can continue
-to use the same field model, although tools reading raw physical lines may need to
-implement the documented folding step.
+External tooling may either implement the same small folding rule or continue to
+operate on one-line records where that is more convenient.
 
-## Implementation and Testing Follow-Up
+The format remains intentionally narrower than shell syntax, INI, YAML, JSON, or a
+general configuration language.
 
-Implementation work should preserve the current ADR-002 parser after introducing
-a record-folding layer ahead of tokenization.
+## Testing Requirements
 
-Regression coverage should include at least:
+Implementation of this ADR SHALL add deterministic behavior tests covering at
+least:
 
-- an existing one-line record;
-- a four-line folded record;
-- tabs as continuation indentation;
-- comments between continuation lines;
-- blank lines between continuation lines;
-- multiple folded records;
-- a continuation before any record;
-- field-order independence across physical lines;
-- inline comments remaining invalid;
-- URLs containing additional `=` characters after folding.
+- a conventional one-line record;
+- a valid record folded across all four fields;
+- two and three successive continuation markers;
+- spaces used for visual indentation;
+- tabs used for visual indentation;
+- no indentation on a continued physical line;
+- field-order independence across continued lines;
+- a URL containing additional `=` characters across a folded record;
+- multiple folded records in one manifest;
+- blank lines and comments outside active continuations;
+- a blank line immediately after a continuation marker;
+- a full-line comment immediately after a continuation marker;
+- an unterminated continuation at end of file;
+- a backslash not used as a standalone trailing marker;
+- trailing whitespace after a backslash marker being rejected;
+- continued rejection of inline comments; and
+- equivalent observable behavior across maintained source and both generated Bash
+  artifacts.
 
 ## Related Decisions
 
-- Extends: ADR-002
-- Related to: ADR-003
-- Related to: ADR-007
+- Refines physical representation defined by: ADR-002
 - Related to: ADR-010
+- Related to: ADR-013
+- Related to: ADR-014
