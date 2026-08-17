@@ -125,7 +125,17 @@ private parser-helper decomposition.
 ### Static and syntax validation
 
 `make check` SHALL perform Bash syntax validation on maintained executable test
-helpers and source, and SHALL invoke ShellCheck for maintained shell source.
+helpers and source.
+
+ShellCheck SHALL run against maintained production source only:
+
+```text
+src/bashdeps.bash
+```
+
+Test helpers and Bats test code SHALL NOT be ShellCheck inputs.  Test code is
+validated through Bash syntax checks where applicable and through the behavior
+suite itself.
 
 `make format` SHALL apply the repository's canonical shfmt configuration to
 maintained shell source and executable test helpers.
