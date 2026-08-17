@@ -26,7 +26,7 @@ VERSION ?= 0.0.0-dev
 BUILD_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')
 BUILD_DATE ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || printf 'unknown')
 
-.PHONY: all build check clean distclean docs docs-clean docs-stage format test test-source test-dev test-dist
+.PHONY: all build check clean distclean docs docs-clean format test test-source test-dev test-dist
 
 all: build
 
@@ -116,12 +116,10 @@ $(DOXYGEN_BASH_FILTER):
 	mv "$@.tmp" "$@"
 
 ##
-# Remove generated reference documentation while preserving its README sentinel.
+# Remove generated Doxygen reference documentation.
 #
 docs-clean:
-	@if [[ -d "$(REFERENCE_DOC_DIR)" ]]; then \
-		find "$(REFERENCE_DOC_DIR)" -mindepth 1 ! -name README.md -exec rm -rf {} +; \
-	fi
+	rm -rf "$(REFERENCE_DOC_DIR)"
 
 ##
 # Generate browsable Doxygen reference documentation from maintained Bash source.
@@ -129,12 +127,6 @@ docs-clean:
 docs: docs-clean $(DOXYGEN_BASH_FILTER)
 	mkdir -p "$(REFERENCE_DOC_DIR)"
 	doxygen Doxyfile
-
-##
-# Regenerate reference documentation and stage the complete generated change set.
-#
-docs-stage: docs
-	git add -A "$(REFERENCE_DOC_DIR)"
 
 clean:
 	rm -rf "$(DIST_DIR)"
