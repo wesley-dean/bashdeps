@@ -17,6 +17,11 @@ declared HTTPS URLs.  It does not discover releases, negotiate versions,
 authenticate to private registries, or decide whether newly retrieved bytes
 should become trusted.
 
+The architecture deliberately separates the synchronization engine from the
+specific command used to transfer bytes.  `curl` and `wget` are transport
+adapters behind one internal download contract rather than dependencies that are
+spread throughout the implementation.
+
 ## Context
 
 ADR-001 establishes exact-byte materialization as the product boundary.  ADR-002
@@ -24,122 +29,191 @@ requires an explicit HTTPS `url` and approved SHA-256 digest for every dependenc
 ADR-003 establishes that `install` and `sync` may use the network only when local
 state does not already satisfy the declaration, while `verify` is network-free.
 
-HTTP behavior can otherwise become surprisingly broad.  Redirects may change
-hosts, retries can mask persistent failures, unlimited transfers can hang builds,
-and multiple download clients can differ subtly in TLS, redirect, timeout, and
-error semantics.
+The project initially selected `curl` as the sole download client because its
+transport controls are explicit and well suited to the required policy.  Further
+portability review identified an important class of lean and embedded Linux
+environments in which `wget`, often through BusyBox, may already be present while
+`curl` is not.  Bootstrap and other Bash projects may reasonably run in such
+environments.
 
-The project therefore needs one explicit acquisition policy that remains small
-enough to test and reason about.
+Requiring `curl` when an otherwise usable HTTPS-capable `wget` is already
+available would create an avoidable installation dependency.  Conversely,
+treating all `wget` implementations as equivalent would overstate what can be
+known about their behavior.  BusyBox applets and individual features can be
+selected at build time, and GNU Wget and BusyBox Wget do not expose identical
+controls for redirects, timeouts, retries, and diagnostics.
+
+The network layer therefore needs a backend-independent contract with explicit
+capability detection and honest backend-specific limits.
 
 ## Decision Drivers
 
-- Require encrypted transport for every network hop.
-- Support common release hosting that redirects to a different HTTPS host.
-- Avoid indefinite connection or transfer hangs.
-- Retry a small number of transient failures without creating an unbounded loop.
-- Use one download implementation rather than maintaining `curl` and `wget`
-  behavior in parallel.
+- Support lean Linux environments without requiring an avoidable download-client
+  installation.
+- Keep downloader-specific flags and behavior isolated behind one internal
+  abstraction.
+- Prefer the transport backend with the strongest predictable control surface
+  when more than one is available.
+- Require HTTPS for every URL accepted from the manifest.
+- Preserve mandatory SHA-256 verification as the authority for acceptable bytes.
+- Avoid indefinite or unbounded retry behavior where the selected backend offers
+  suitable controls.
 - Treat HTTP, TLS, transport, and digest failures as hard failures.
 - Never allow retrieved bytes to change the approved digest automatically.
 - Keep `verify` completely network-free.
 - Keep authenticated/private dependency support outside version 1.
+- Make security claims no stronger than the selected backend can enforce.
 
 ## Decision
 
-Version 1 SHALL require `curl` for network acquisition.
+Version 1 SHALL implement network acquisition through a private downloader
+abstraction.
 
-`bashdeps` SHALL NOT provide a `wget` fallback in version 1.  Supporting one
-client keeps transport behavior, diagnostics, and tests consistent.  A future
-platform requirement may justify another client through a separate architectural
-decision.
+The synchronization, manifest, staging, verification, and publication layers
+SHALL NOT construct downloader-specific commands directly.  They SHALL request
+an acquisition through one internal operation whose conceptual contract is:
 
-### HTTPS-only transport
+```text
+download URL CANDIDATE_PATH
+```
 
-The initial manifest grammar accepts only URLs beginning with:
+The downloader abstraction SHALL select a supported backend at runtime in this
+order:
+
+1. `curl`, when available and usable;
+2. `wget`, when `curl` is unavailable and the available `wget` can perform the
+   required HTTPS acquisition;
+3. failure when neither supported backend is usable.
+
+Selection SHALL be based on runtime capability rather than operating-system or
+distribution-name assumptions.
+
+When both clients are available, `curl` SHALL be preferred because its redirect,
+protocol, timeout, and failure controls provide the more explicit policy surface.
+
+Version 1 SHALL support only these two downloader families.  Additional clients
+require a deliberate extension of this ADR and a tested adapter rather than
+being invoked opportunistically.
+
+### Backend isolation
+
+Downloader-specific argv construction, capability checks, and exit-code handling
+SHALL remain inside backend-specific private functions.
+
+The remainder of `bashdeps` SHALL reason only about outcomes such as:
+
+- candidate acquired successfully;
+- no supported downloader available;
+- downloader lacks a required capability;
+- transport or HTTP failure;
+- candidate acquired but later rejected by digest verification.
+
+A transport backend SHALL write only to the candidate path supplied by the
+staging layer.  No downloader SHALL write directly over a declared destination.
+
+Manifest values SHALL be passed as data arguments.  `bashdeps` SHALL NOT build a
+shell command string from a URL or use `eval` to invoke a downloader.
+
+### HTTPS declaration requirement
+
+The manifest grammar SHALL continue to accept only URLs beginning with:
 
 ```text
 https://
 ```
 
-Every redirect followed during acquisition SHALL also use HTTPS.
+Plain `http://`, `ftp://`, `file://`, scheme-relative URLs, and other schemes
+remain invalid declarations.
 
-`bashdeps` SHALL configure `curl` so an initial HTTPS request cannot redirect to
-HTTP or another non-HTTPS scheme.
+The selected backend SHALL use ordinary certificate verification.  `bashdeps`
+SHALL NOT deliberately disable TLS certificate or hostname verification.
 
-A redirect to a different host MAY be followed when the resulting URL remains
-HTTPS.  This behavior is necessary for common release-asset hosting patterns,
-including services that redirect a stable release URL to a separate object or
-content host.
+An installed `wget` command that cannot successfully perform HTTPS retrieval is
+not a usable `wget` backend for `bashdeps`.
 
-Version 1 SHALL NOT use behavior equivalent to `curl --location-trusted` and
-SHALL NOT deliberately forward authentication credentials across redirect hosts.
-Authenticated URLs and private dependency acquisition are outside the initial
-scope.
+### Redirect behavior
 
-### HTTP failure behavior
+Cross-host HTTPS redirects are legitimate for common release hosting and SHALL
+not be rejected merely because the hostname changes.
 
-HTTP response failures SHALL be treated as acquisition failures rather than as
-candidate artifact content.
+The `curl` backend SHALL restrict redirects to HTTPS and SHALL apply a redirect
+limit of 10.
 
-The acquisition implementation SHALL use `curl` failure behavior equivalent to
-`--fail` so ordinary HTTP error responses do not proceed to publication as though
-they were successful artifacts.
+Portable `wget` implementations do not provide one uniform control surface for
+restricting every redirect hop to HTTPS or configuring an identical redirect
+limit.  Version 1 therefore SHALL NOT claim that the `wget` backend can enforce
+the same redirect-scheme and redirect-count guarantees as the `curl` backend.
 
-DNS failures, connection failures, TLS failures, redirect-policy violations,
-timeouts, and unsuccessful transfers SHALL also be hard acquisition failures.
+This limitation does not weaken the manifest byte-identity rule: bytes acquired
+through either backend SHALL still be rejected unless their SHA-256 digest
+matches the approved declaration exactly.
 
-A failed acquisition SHALL never cause the approved manifest digest to be
-changed automatically.
+If future evidence identifies a reliable common mechanism for inspecting or
+restricting redirect hops across supported `wget` implementations, that stronger
+transport guarantee may be added without changing the manifest model.
 
-### Redirect limit
+### HTTP and transport failure behavior
 
-An acquisition SHALL follow no more than 10 redirects.
+An unsuccessful downloader exit status SHALL be treated as an acquisition
+failure.
 
-Exceeding that limit SHALL fail the artifact acquisition.
+Ordinary HTTP errors, DNS failures, connection failures, TLS failures, unsupported
+HTTPS behavior, timeout failures, and unsuccessful transfers SHALL never produce
+an eligible publication candidate.
 
-### Connection and transfer time limits
+The acquisition layer SHALL NOT interpret an error response body as a successful
+artifact merely because bytes were written to a temporary path.
 
-Each acquisition SHALL use a connection timeout of 10 seconds.
+A failed acquisition SHALL never cause the approved manifest digest to change
+automatically.
 
-Each transfer attempt SHALL use a maximum total transfer time of 120 seconds.
+### Timeout and retry policy
 
-These limits are intentionally finite defaults rather than user-configurable
-version 1 manifest properties.  They are long enough for the small build inputs
-that motivated the project while preventing ordinary builds from hanging
-indefinitely on network failure.
+The acquisition layer SHALL use bounded retries under its own control rather
+than relying exclusively on downloader-specific automatic retry behavior.
 
-A future demonstrated need for very large artifacts or unusually slow links may
-justify configurable acquisition limits.
+An artifact MAY be attempted initially and retried up to two additional times for
+transport failures, for a maximum of three acquisition attempts.  A one-second
+delay SHOULD separate retry attempts.
 
-### Retry policy
+Digest mismatch occurs after transport and SHALL NOT be treated as a transient
+network condition.  A digest mismatch SHALL NOT trigger automatic trust,
+automatic digest replacement, or an unbounded reacquisition loop.
 
-`bashdeps` SHALL permit two retries after an initially unsuccessful transfer when
-`curl` classifies the failure as retryable under its supported retry behavior.
+The `curl` backend SHALL use a connection timeout of 10 seconds and a maximum
+total transfer time of 120 seconds per attempt.
 
-Retries SHALL use a one-second delay.
+A usable `wget` backend SHOULD use its available finite timeout control.  Because
+GNU Wget and configurable BusyBox Wget implementations do not provide identical
+timeout semantics, version 1 SHALL NOT claim byte-for-byte or second-for-second
+network timing equivalence between backends.
 
-The retry policy SHALL NOT bypass the HTTPS-only scheme rule, redirect limit,
-per-attempt transfer timeout, or digest verification requirement.
+If the detected `wget` lacks a timeout capability that the implementation has
+defined as necessary for safe non-interactive operation, `bashdeps` MAY reject
+that `wget` as an unsupported backend rather than silently weakening the
+operation.  The exact capability probe belongs to implementation and platform
+testing, while the fail-closed behavior is normative.
 
-A digest mismatch SHALL NOT be treated as a transient network condition and
-SHALL NOT trigger automatic acceptance, digest replacement, or an unbounded
-redownload loop.
+### Candidate handling and digest authority
 
-### Candidate handling
+A successful transfer establishes only that bytes were retrieved.
 
-Network output SHALL be written only to staging or another temporary candidate
-path defined by the publication ADR.
+Every candidate acquired through `curl` or `wget` SHALL be SHA-256 verified
+against the approved manifest declaration before it is eligible for publication.
 
-`curl` SHALL NOT write directly over the declared destination.
+The downloader backend has no authority to establish artifact identity.  HTTP
+metadata, remote filenames, timestamps, ETags, Content-Length, server-provided
+checksums, and downloader success statuses SHALL NOT substitute for the committed
+SHA-256 digest.
 
-A successful transfer establishes only that bytes were retrieved.  The candidate
-SHALL still be SHA-256 verified against the approved declaration before it is
-eligible for publication.
+This separation is particularly important because the supported download clients
+have different transport capabilities.  The transport adapter retrieves bytes;
+the verification layer decides whether those bytes are the approved artifact.
 
-### Command behavior
+### `curl` backend policy
 
-The intended `curl` policy is equivalent in substance to a command using:
+Where supported by the selected `curl`, the backend policy SHALL be equivalent in
+substance to:
 
 ```text
 --fail
@@ -151,15 +225,34 @@ The intended `curl` policy is equivalent in substance to a command using:
 --max-redirs 10
 --connect-timeout 10
 --max-time 120
---retry 2
---retry-delay 1
 ```
 
-The exact argv construction is an implementation detail, but the observable
-security and timeout behavior above is normative.
+Retries are intentionally managed by the acquisition layer rather than requiring
+`curl --retry` semantics.
 
-The implementation SHALL pass URL values as data arguments to `curl`.  It SHALL
-NOT construct a shell command string from manifest content or use `eval`.
+The exact argv construction remains an implementation detail.  The HTTPS-only
+redirect restriction and timeout behavior described above are normative for the
+`curl` backend.
+
+### `wget` backend policy
+
+The `wget` adapter SHALL use non-interactive retrieval and explicit output to the
+staging candidate path.
+
+It SHALL avoid options that disable TLS certificate verification.
+
+It SHALL use finite timeout controls when the detected implementation provides
+the required supported form.
+
+The adapter SHALL account for differences between GNU Wget and BusyBox Wget
+without exposing those differences to the synchronization engine.  Flavor or
+capability detection MAY inspect supported command behavior or help output, but
+`bashdeps` SHALL fail rather than assume an option exists and then silently run
+with weaker semantics.
+
+The `wget` backend SHALL not be described as feature-equivalent to the `curl`
+backend.  It is a portability backend implementing the same artifact-acquisition
+role under the explicitly documented transport limitations above.
 
 ### Network boundaries by operation
 
@@ -172,41 +265,56 @@ destinations are missing or mismatched.
 `bashdeps verify` SHALL NOT access the network under any circumstance.
 
 A correct existing destination SHALL therefore be reusable without a network
-request.
+request or the presence of either downloader.
 
 ## Considered Alternatives
 
-### Support both `curl` and `wget`
+### Require only `curl`
 
-This would broaden platform compatibility, but it would create two transport
-implementations with different flags, redirect behavior, TLS handling, retry
-semantics, and diagnostics.  No current consumer requires that complexity.
+This provides the most uniform transport behavior and was the original decision.
+It was reconsidered because lean environments, including BusyBox-oriented systems,
+may have a usable `wget` while lacking `curl`.  Requiring installation of another
+client is unnecessary when a verified fallback can satisfy the core acquisition
+role.
+
+### Prefer `wget` when available
+
+This might align with minimal Linux environments, but `curl` provides stronger
+and more explicit protocol and redirect controls for the policy required here.
+`curl` therefore remains the preferred backend when both are present.
+
+### Treat `curl` and `wget` as identical implementations
+
+This would simplify documentation but would be inaccurate.  GNU Wget, BusyBox
+Wget, and `curl` expose different capabilities and failure semantics.  The
+architecture normalizes the role and high-level outcomes without pretending the
+transport mechanisms are identical.
+
+### Scatter client detection throughout synchronization code
+
+Individual call sites could choose whichever downloader is present.  This was
+rejected because it would tightly couple synchronization behavior to external
+command details and make testing, portability, and later backend changes harder.
+A private transport adapter creates a single architectural boundary.
 
 ### Reject cross-host redirects
 
 A same-host-only policy would narrow the trust path but would reject common
 release hosting where a public HTTPS release URL redirects to another HTTPS
-content host.  Digest verification remains the byte-authority check, so HTTPS
-cross-host redirects are accepted in version 1.
+content host.  Digest verification remains the byte-authority check, so cross-host
+redirects are acceptable when supported by the selected backend.
 
-### Permit HTTP
+### Permit HTTP manifest URLs
 
-A digest can detect changed bytes after download, but allowing plaintext
-transport unnecessarily exposes retrieval metadata and content to active network
-interference.  HTTPS is available for the intended dependency sources and is
-required.
+A digest can detect changed bytes after download, but allowing plaintext URLs
+unnecessarily weakens transport.  The declared source itself must remain HTTPS.
 
-### No explicit timeouts
+### No explicit timeouts or retry bounds
 
 Relying entirely on client defaults reduces policy code but can leave developer
 or CI operations waiting much longer than intended during network failures.
-Finite limits make failure behavior more predictable.
-
-### Unlimited or aggressive retries
-
-More retries might overcome unstable networks but would increase build latency
-and can amplify upstream failures.  Version 1 chooses a small bounded retry
-policy.
+Version 1 uses bounded retries and backend timeout controls where they can be
+reliably applied.
 
 ### Automatically trust changed bytes after a digest mismatch
 
@@ -217,31 +325,41 @@ review.
 ## Consequences
 
 A project with correct local dependency bytes can run `install` or `sync` without
-network access for those records.
+network access and without requiring either downloader for those already-satisfied
+records.
 
-Missing or mismatched artifacts require `curl` and reachable HTTPS sources.
+When acquisition is required, `curl` is used when available.  A usable `wget`
+provides a portability fallback when `curl` is absent.  If neither supported
+backend can perform the required HTTPS retrieval, acquisition fails explicitly.
 
-Common HTTPS redirect-based release hosting remains usable, including cross-host
-redirects, while downgrade redirects are rejected.
+The downloader abstraction creates a clean separation between dependency-state
+logic and external transport utilities.  Future downloader support can be added
+behind that boundary without changing manifest, staging, digest, or publication
+semantics.
 
-Network failures are bounded by explicit timeout and retry limits rather than
-being allowed to continue indefinitely.
+Transport guarantees are backend-aware rather than falsely uniform.  In
+particular, version 1 does not claim identical redirect controls or timeout
+semantics for portable `wget` implementations.
+
+Mandatory SHA-256 verification remains the backend-independent authority for
+whether acquired bytes may be published.
 
 The project intentionally does not support private/authenticated artifacts in
 version 1.
 
-The required `curl` capability and any minimum supported version will be recorded
-with the external-command/platform requirements.
+Downloader capability requirements and the SHA-256 command selection will be
+recorded with the external-command/platform requirements.
 
 ## Open Questions and Follow-Ups
 
 Subsequent ADRs need to define:
 
-- exact staging and publication filesystem behavior;
-- minimum supported `curl` and Bash capabilities;
-- diagnostics and exit-status mapping for acquisition failures;
-- whether future consumers justify authenticated URLs, mirrors, or configurable
-  timeout policy.
+- exact runtime capability probes used to accept or reject a `wget` backend;
+- SHA-256 command selection and minimum Bash capabilities;
+- diagnostics and exit-status mapping for downloader selection and acquisition
+  failures;
+- whether future consumers justify authenticated URLs, mirrors, configurable
+  timeout policy, or stronger portable redirect inspection.
 
 ## Related Decisions
 
