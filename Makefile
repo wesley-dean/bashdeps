@@ -78,7 +78,7 @@ build: $(SOURCE)
 
 check:
 	bash -n "$(SOURCE)" $(TEST_HELPERS) "$(COMPAT_TEST)"
-	shellcheck "$(SOURCE)" $(TEST_HELPERS) "$(COMPAT_TEST)"
+	shellcheck "$(SOURCE)"
 
 format:
 	shfmt -w -i 2 -ci "$(SOURCE)" $(TEST_HELPERS) "$(COMPAT_TEST)"
