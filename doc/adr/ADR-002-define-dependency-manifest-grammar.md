@@ -46,6 +46,10 @@ repository-relative destination.  ADR-013 later supersedes that policy with a
 default `vendor/` destination root plus an explicit invocation-level
 `--dest-root` override.  The lexical `dest` grammar defined here remains in force.
 
+ADR-015 later refines only the physical representation of a logical record by
+allowing explicit trailing `\` continuation markers.  The logical `KEY=VALUE`
+grammar defined here remains authoritative after physical-line folding.
+
 ## Decision Drivers
 
 - Keep parsing deterministic and inspectable.
@@ -67,7 +71,9 @@ The conventional manifest filename SHALL be:
 dependencies.txt
 ```
 
-Each dependency SHALL occupy one logical line.
+Each dependency SHALL occupy one logical line.  ADR-015 permits that logical line
+to be represented across multiple physical lines using explicit trailing `\`
+continuation markers before the record grammar below is applied.
 
 A version 1 dependency record SHALL contain exactly these four named fields,
 each exactly once:
@@ -98,7 +104,7 @@ Fields SHALL be separated by one or more horizontal whitespace characters:
 spaces or tabs.  Field values SHALL NOT contain literal spaces or tabs in version
 1.
 
-Conceptually, the record is first split into components using:
+Conceptually, the completed logical record is first split into components using:
 
 ```text
 [[:blank:]]+
@@ -154,10 +160,14 @@ it encounters manifest semantics introduced by a newer release.  Future ADRs may
 add named fields such as `mode=0775` without changing the fundamental
 `KEY=VALUE` record structure.
 
-Blank lines SHALL be ignored.
+Blank lines SHALL be ignored when no physical-line continuation is active.
 
-A line whose first non-horizontal-whitespace character is `#` SHALL be treated
-as a comment and ignored.
+A line whose first non-horizontal-whitespace character is `#` SHALL be treated as
+a comment and ignored when no physical-line continuation is active.
+
+ADR-015 defines the stricter rule for an active continuation: the physical line
+immediately following a trailing `\` marker must contain continued record content;
+a blank line, comment line, or end of file at that point is invalid.
 
 Inline comments SHALL NOT be part of version 1.  Once parsing of a dependency
 record begins, every whitespace-delimited component SHALL be a `KEY=VALUE` field.
@@ -254,8 +264,8 @@ Unknown digest algorithms SHALL fail closed.
 
 ### Record-level uniqueness and duplicate handling
 
-Each non-comment, non-blank record SHALL contain all four required version 1
-fields exactly once.
+Each completed non-comment, non-blank logical record SHALL contain all four
+required version 1 fields exactly once.
 
 Missing, duplicate, or unknown fields SHALL make the manifest invalid.
 
@@ -275,8 +285,9 @@ Manifest content SHALL be treated as data.
 `bashdeps` SHALL NOT `source` or `eval` the manifest.
 
 Shell parameter expansion, command substitution, arithmetic expansion,
-backslash escapes, quoting syntax, glob expansion, or environment-variable
-interpolation SHALL NOT be performed on manifest field values.
+backslash escapes other than ADR-015's standalone trailing continuation marker,
+quoting syntax, glob expansion, or environment-variable interpolation SHALL NOT
+be performed on manifest field values.
 
 Characters that would have shell meaning in executable code SHALL remain literal
 manifest data when they are otherwise valid under the field-specific grammar.
@@ -284,6 +295,9 @@ manifest data when they are otherwise valid under the field-specific grammar.
 This distinction matters because a manifest record is not itself a shell command.
 For example, `&` may appear literally inside a URL in `dependencies.txt` without
 being treated as a shell control operator.
+
+ADR-015's trailing `\` marker is a manifest lexical convention only; it does not
+turn manifest text into Bash syntax or introduce general backslash escaping.
 
 ### Relationship to `bashdeps.bash install`
 
@@ -308,6 +322,10 @@ bashdeps.bash install \
   dest=vendor/example \
   digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
+
+The shell's own `\`-newline continuation syntax in a command invocation is
+processed by the shell before bashdeps receives argv.  ADR-015 applies only while
+bashdeps reads manifest files.
 
 `sync` SHALL parse manifest records as data and SHALL NOT construct, `eval`, or
 execute command strings by prefixing manifest lines with `bashdeps.bash install`.
@@ -361,7 +379,24 @@ to consume, but it would turn trusted dependency metadata into executable shell
 input and unnecessarily expand the attack surface.
 
 The chosen `KEY=VALUE` syntax resembles shell assignments visually but is parsed
-as ordinary data and never sourced or evaluated.
+as ordinary data and never sourced or evaluated.  ADR-015 borrows only the
+familiar visual convention of a trailing `\` for physical-line continuation and
+does not adopt shell evaluation semantics.
+
+### INI-style syntax
+
+An INI-like format could make one field per physical line natural, but INI does
+not have one universally defined grammar.  The project would need to define
+section identity, duplicate sections and keys, comment syntax, quoting, escaping,
+whitespace trimming, and continuation behavior.  ADR-015 instead preserves the
+smaller named-field grammar and adds one explicit continuation marker.
+
+### Indentation-sensitive continuation
+
+The project briefly considered making an indented line automatically continue the
+preceding record.  That would make accidental whitespace changes semantically
+significant.  ADR-015 instead requires an explicit trailing `\`, leaving
+indentation cosmetic.
 
 ### Silently ignore unknown named fields
 
@@ -403,6 +438,9 @@ completely before any network or filesystem publication begins.
 Human reviewers can identify field meaning without remembering positional
 columns, and field order can change without changing semantics.
 
+Long records may be represented across multiple physical lines using ADR-015's
+explicit trailing continuation marker without changing the logical grammar.
+
 URLs and other values may contain `=` without ambiguity because only the first
 `=` in each component separates its name from its value.
 
@@ -441,6 +479,7 @@ Subsequent ADRs need to define:
 - Related to: ADR-000
 - Related to: ADR-001
 - Related to: ADR-003
+- Refined in physical representation by: ADR-015
 - Superseded in destination scope by: ADR-013
 - Derived from: `bash-dependency-manifest-handoff.md`
 - Derived from: `bash-dependency-convergence-handoff.md`
