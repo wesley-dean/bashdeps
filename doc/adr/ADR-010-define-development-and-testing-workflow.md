@@ -83,9 +83,17 @@ or narrowly scoped adapter tests.
 The test suite SHALL include cases for:
 
 - blank lines and full-line manifest comments;
-- named-field order independence;
+- existing one-line manifest records;
+- folded manifest records using indented physical continuation lines;
+- spaces and tabs as continuation indentation;
+- comments and blank lines between continuation lines without terminating the
+  logical record;
+- continuation lines before any logical record failing closed;
+- multiple folded logical records in one manifest;
+- named-field order independence, including order changes across physical lines;
 - splitting each field at the first `=` only;
-- URLs containing additional `=` characters;
+- URLs containing additional `=` characters, including in folded records;
+- inline comments remaining invalid after physical-line folding;
 - duplicate, missing, and unknown fields;
 - duplicate identities and destinations;
 - invalid URLs, paths, and digests;
@@ -102,6 +110,10 @@ The test suite SHALL include cases for:
 - documented exit-status categories;
 - help and version behavior;
 - equivalent observable behavior across source and both distribution artifacts.
+
+ADR-015 defines physical-line folding as a manifest preprocessing step.  Tests
+SHALL exercise folding through the public CLI rather than freezing a particular
+private parser-helper decomposition.
 
 ### Static and syntax validation
 
@@ -153,6 +165,10 @@ public behavior and adapter contract continue to pass.
 The build transformation is continuously checked for semantic equivalence rather
 than trusted by inspection alone.
 
+The parser may gain a dedicated physical-line assembly helper or may fold records
+inside existing manifest-loading logic; tests intentionally constrain observable
+folding semantics rather than that internal structure.
+
 ## Open Questions and Follow-Ups
 
 Optional end-to-end tests against real HTTPS services may be introduced later as
@@ -165,3 +181,4 @@ acquisition behavior.
 - Related to: ADR-007
 - Related to: ADR-008
 - Related to: ADR-009
+- Related to: ADR-015
