@@ -10,7 +10,8 @@ setup() {
   run bash "$BASHDEPS_TEST_EXECUTABLE" --help
   [ "$status" -eq 0 ]
   [[ "$output" == *"bashdeps install"* ]]
-  [[ "$output" == *"bashdeps sync [MANIFEST]"* ]]
+  [[ "$output" == *"bashdeps sync [--dest-root PATH] [MANIFEST]"* ]]
+  [[ "$output" == *"--dest-root PATH"* ]]
 
   run bash "$BASHDEPS_TEST_EXECUTABLE" --version
   [ "$status" -eq 0 ]
@@ -112,10 +113,86 @@ setup() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"invalid destination"* ]]
 
+  printf 'id=item@1 url=https://example.test/item dest=/etc/passwd digest=sha256:%s\n' "$digest" >dependencies.txt
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid destination"* ]]
+
+  printf 'id=item@1 url=https://example.test/item dest=vendor/../../../../etc/passwd digest=sha256:%s\n' "$digest" >dependencies.txt
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid destination"* ]]
+
   printf 'id=item@1 url=https://example.test/item dest=vendor/item digest=sha256:ABC\n' >dependencies.txt
   run bash "$BASHDEPS_TEST_EXECUTABLE" verify
   [ "$status" -eq 2 ]
   [[ "$output" == *"invalid digest"* ]]
+}
+
+@test "default destination root rejects arbitrary project paths" {
+  digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+  printf 'id=item@1 url=https://example.test/item dest=Makefile digest=sha256:%s\n' "$digest" >dependencies.txt
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"outside allowed root vendor"* ]]
+
+  printf 'id=item@1 url=https://example.test/item dest=vendor-old/item digest=sha256:%s\n' "$digest" >dependencies.txt
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"outside allowed root vendor"* ]]
+
+  printf 'id=item@1 url=https://example.test/item dest=vendor digest=sha256:%s\n' "$digest" >dependencies.txt
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"outside allowed root vendor"* ]]
+}
+
+@test "destination root override is containment policy and does not rewrite dest" {
+  printf 'approved bytes\n' >payload
+  digest=$(bashdeps_sha256_of payload)
+  printf 'id=item@1 url=https://example.test/item dest=assets/item.dat digest=sha256:%s\n' "$digest" >dependencies.txt
+  bashdeps_make_mock_curl
+
+  run env PATH="$BASHDEPS_TEST_PROJECT/mock-bin:$PATH" MOCK_SOURCE="$BASHDEPS_TEST_PROJECT/payload" \
+    bash "$BASHDEPS_TEST_EXECUTABLE" sync --dest-root assets/ dependencies.txt
+  [ "$status" -eq 0 ]
+  [ "$(cat assets/item.dat)" = 'approved bytes' ]
+  [ ! -e vendor/assets/item.dat ]
+
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify --dest-root assets/ dependencies.txt
+  [ "$status" -eq 0 ]
+}
+
+@test "destination root override still rejects destinations outside the selected root" {
+  digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  printf 'id=item@1 url=https://example.test/item dest=vendor/item digest=sha256:%s\n' "$digest" >dependencies.txt
+
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify --dest-root assets dependencies.txt
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"outside allowed root assets"* ]]
+}
+
+@test "invalid destination root values are rejected as CLI input" {
+  : >dependencies.txt
+
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify --dest-root ../assets dependencies.txt
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid destination root"* ]]
+
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify --dest-root /tmp dependencies.txt
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid destination root"* ]]
+}
+
+@test "vendor trailing slash is equivalent to canonical default root" {
+  mkdir -p vendor
+  printf 'approved bytes\n' >vendor/item
+  digest=$(bashdeps_sha256_of vendor/item)
+  printf 'id=item@1 url=https://example.test/item dest=vendor/item digest=sha256:%s\n' "$digest" >dependencies.txt
+
+  run bash "$BASHDEPS_TEST_EXECUTABLE" verify --dest-root vendor/ dependencies.txt
+  [ "$status" -eq 0 ]
 }
 
 @test "duplicate identities are rejected before acquisition" {
@@ -184,6 +261,19 @@ setup() {
     bash "$BASHDEPS_TEST_EXECUTABLE" sync
   [ "$status" -eq 0 ]
   [ "$(cat vendor/extra)" = 'keep me' ]
+}
+
+@test "sync creates missing nested destination directories after preflight" {
+  printf 'approved bytes\n' >payload
+  digest=$(bashdeps_sha256_of payload)
+  printf 'id=item@1 url=https://example.test/item dest=vendor/deep/nested/item digest=sha256:%s\n' "$digest" >dependencies.txt
+  bashdeps_make_mock_curl
+
+  [ ! -e vendor ]
+  run env PATH="$BASHDEPS_TEST_PROJECT/mock-bin:$PATH" MOCK_SOURCE="$BASHDEPS_TEST_PROJECT/payload" \
+    bash "$BASHDEPS_TEST_EXECUTABLE" sync
+  [ "$status" -eq 0 ]
+  [ "$(cat vendor/deep/nested/item)" = 'approved bytes' ]
 }
 
 @test "newly published files use mode 0644" {
@@ -279,13 +369,13 @@ setup() {
   [ "$status" -eq 3 ]
 }
 
-@test "install uses the same named-field declaration grammar" {
+@test "install uses the same named-field grammar with explicit alternate root" {
   printf 'approved bytes\n' >payload
   digest=$(bashdeps_sha256_of payload)
   bashdeps_make_mock_curl
 
   run env PATH="$BASHDEPS_TEST_PROJECT/mock-bin:$PATH" MOCK_SOURCE="$BASHDEPS_TEST_PROJECT/payload" \
-    bash "$BASHDEPS_TEST_EXECUTABLE" install \
+    bash "$BASHDEPS_TEST_EXECUTABLE" install --dest-root assets/ \
       "url=https://example.test/item?x=1&y=2" "digest=sha256:$digest" "id=item@1" "dest=assets/item.dat"
   [ "$status" -eq 0 ]
   [ "$(cat assets/item.dat)" = 'approved bytes' ]
