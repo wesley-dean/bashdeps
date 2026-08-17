@@ -118,14 +118,16 @@ other shell evaluation behavior.
 
 When a physical line ends with the continuation marker, bashdeps SHALL:
 
-1. remove the horizontal whitespace immediately separating the marker from the
-   preceding content as needed to remove the marker cleanly;
-2. remove the marker itself;
-3. require another physical content line immediately after it;
-4. remove leading horizontal whitespace from that next content line for folding
+1. remove the trailing `\` marker while retaining the field content before it;
+2. require another physical content line immediately after it;
+3. remove leading horizontal whitespace from that next content line for folding
    purposes; and
-5. append the next line's content to the accumulated logical record using exactly
+4. append the next line's content to the accumulated logical record using exactly
    one ASCII space between the two physical-line fragments.
+
+Horizontal whitespace immediately before the continuation marker serves only to
+separate the marker from the preceding field token.  It does not become part of
+the folded logical record.
 
 If the next physical line also ends with a continuation marker, folding SHALL
 continue recursively until a physical content line without a continuation marker
