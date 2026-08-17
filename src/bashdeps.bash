@@ -200,7 +200,6 @@ __bashdeps_load_manifest() {
     __bashdeps_diag "manifest is not a readable regular file: $manifest"
     return 2
   }
-
   while IFS= read -r line || [[ -n $line ]]; do
     line_number=$((line_number + 1))
     [[ $line =~ ^[[:blank:]]*$ ]] && continue
@@ -353,6 +352,30 @@ __bashdeps_check_existing_path() {
   done
 }
 
+__bashdeps_check_parent_path() {
+  local root dest current component last index
+  local -a components
+  root=$1
+  dest=$2
+
+  IFS='/' read -r -a components <<<"$dest"
+  current=$root
+  last=$((${#components[@]} - 1))
+
+  for ((index = 0; index < last; index++)); do
+    component=${components[index]}
+    current=$current/$component
+    if [[ -L $current ]]; then
+      __bashdeps_diag "symbolic links are not permitted in destination path: $dest"
+      return 6
+    fi
+    if [[ -e $current && ! -d $current ]]; then
+      __bashdeps_diag "destination parent is not a directory: $dest"
+      return 6
+    fi
+  done
+}
+
 __bashdeps_destination_state() {
   local root dest expected path actual
   root=$1
@@ -402,12 +425,12 @@ __bashdeps_ensure_parent() {
 
   if [[ $dest == */* ]]; then
     parent=${dest%/*}
-    __bashdeps_check_existing_path "$root" "$parent/.bashdeps-placeholder" || return $?
+    __bashdeps_check_parent_path "$root" "$dest" || return $?
     mkdir -p "$root/$parent" 2>/dev/null || {
       __bashdeps_diag "unable to create destination parent: $parent"
       return 6
     }
-    __bashdeps_check_existing_path "$root" "$parent/.bashdeps-placeholder" || return $?
+    __bashdeps_check_parent_path "$root" "$dest" || return $?
   fi
 }
 
