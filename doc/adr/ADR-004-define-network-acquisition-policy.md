@@ -33,8 +33,9 @@ The project initially selected `curl` as the sole download client because its
 transport controls are explicit and well suited to the required policy.  Further
 portability review identified an important class of lean and embedded Linux
 environments in which `wget`, often through BusyBox, may already be present while
-`curl` is not.  Bootstrap and other Bash projects may reasonably run in such
-environments.
+`curl` is not.  Consumers such as `adrctl`, which acquires and embeds the pinned
+`mktext` release artifact as part of its build, benefit from avoiding an
+unnecessary dependency on one particular download client.
 
 Requiring `curl` when an otherwise usable HTTPS-capable `wget` is already
 available would create an avoidable installation dependency.  Conversely,
