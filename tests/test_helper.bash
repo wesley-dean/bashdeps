@@ -52,13 +52,34 @@ MOCK
   chmod +x "$BASHDEPS_TEST_PROJECT/mock-bin/curl"
 }
 
-bashdeps_make_isolated_path() {
+bashdeps_make_base_isolated_path() {
   local command path
   mkdir -p "$BASHDEPS_TEST_PROJECT/isolated-bin"
-  for command in bash sha256sum mkdir rm chmod cp mv; do
+  for command in bash mkdir rm chmod cp mv; do
     path=$(command -v "$command")
     ln -s "$path" "$BASHDEPS_TEST_PROJECT/isolated-bin/$command"
   done
+}
+
+bashdeps_make_isolated_path() {
+  local path
+  bashdeps_make_base_isolated_path
+  path=$(command -v sha256sum)
+  ln -s "$path" "$BASHDEPS_TEST_PROJECT/isolated-bin/sha256sum"
+}
+
+bashdeps_make_mock_shasum_path() {
+  local sha256sum_path
+  bashdeps_make_base_isolated_path
+  sha256sum_path=$(command -v sha256sum)
+  cat >"$BASHDEPS_TEST_PROJECT/isolated-bin/shasum" <<MOCK
+#!/bin/bash
+set -eu
+[[ \${1:-} == '-a' && \${2:-} == '256' ]]
+shift 2
+"$sha256sum_path" "\$@"
+MOCK
+  chmod +x "$BASHDEPS_TEST_PROJECT/isolated-bin/shasum"
 }
 
 bashdeps_make_mock_wget() {
