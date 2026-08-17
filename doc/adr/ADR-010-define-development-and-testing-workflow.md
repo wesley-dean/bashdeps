@@ -82,17 +82,24 @@ or narrowly scoped adapter tests.
 
 The test suite SHALL include cases for:
 
-- blank lines and full-line manifest comments;
+- blank lines and full-line manifest comments outside active continuations;
 - existing one-line manifest records;
-- folded manifest records using indented physical continuation lines;
-- spaces and tabs as continuation indentation;
-- comments and blank lines between continuation lines without terminating the
-  logical record;
-- continuation lines before any logical record failing closed;
-- multiple folded logical records in one manifest;
+- folded manifest records using standalone trailing `\` continuation markers;
+- successive continuation markers across several physical lines;
+- spaces and tabs used only for visual indentation on continued lines;
+- continued lines with no indentation;
+- indentation without a preceding continuation marker not joining records;
 - named-field order independence, including order changes across physical lines;
 - splitting each field at the first `=` only;
 - URLs containing additional `=` characters, including in folded records;
+- multiple folded logical records in one manifest;
+- blank lines immediately after a continuation marker failing closed;
+- full-line comments immediately after a continuation marker failing closed;
+- an unterminated continuation at end of file failing closed;
+- malformed continuation markers, including trailing whitespace after `\`, failing
+  closed;
+- a backslash that is not a standalone trailing marker remaining ordinary data
+  subject to field-specific validation;
 - inline comments remaining invalid after physical-line folding;
 - duplicate, missing, and unknown fields;
 - duplicate identities and destinations;
