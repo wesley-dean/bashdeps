@@ -389,7 +389,9 @@ Bash artifacts.
 
 ## Development
 
-The project follows documentation-driven, test-second development.
+The project follows documentation-driven, test-second development.  Maintained
+Bash source follows the documentation-first Doxygen-style standard defined by
+ADR-014 and derived from Bootstrap ADR-045.
 
 Common targets are:
 
