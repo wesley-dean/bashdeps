@@ -439,11 +439,41 @@ make test
 make test-source
 make test-dev
 make test-dist
+make docs
+make docs-clean
 make clean
+make distclean
 ```
 
 Bats is the primary behavior-test framework.  Ordinary tests use controlled local
 fixtures rather than live public network services.
+
+### Generate reference documentation
+
+Doxygen reference documentation is generated from `src/bashdeps.bash` with:
+
+```bash
+make docs
+```
+
+Local documentation generation requires Doxygen.  The Make target downloads the
+`bash-doxygen` AWK filter into `vendor/doxygen-bash.awk` on first use and then
+writes the generated site under `doc/reference/`.
+
+Both the downloaded filter and generated reference directory are ignored by Git.
+Use `make docs-clean` to remove only generated reference documentation or
+`make distclean` to remove normal build output, reference documentation, and the
+downloaded filter.
+
+Generated Doxygen output is not committed to this repository.  On pushes to
+`main`, `.github/workflows/static.yml` installs Doxygen, runs the same `make docs`
+target, and publishes `doc/reference/` to GitHub Pages at:
+
+```text
+https://wesley-dean.github.io/bashdeps/
+```
+
+See ADR-016 for the generation and publication decision.
 
 ## Architecture
 
