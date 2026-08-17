@@ -7,8 +7,9 @@ SRC_DIR := src
 DIST_DIR := dist
 SOURCE := $(SRC_DIR)/bashdeps.bash
 DEV_ARTIFACT := $(DIST_DIR)/bashdeps.dev.bash
+DEV_CHECKSUM := $(DEV_ARTIFACT).256
 DIST_ARTIFACT := $(DIST_DIR)/bashdeps.bash
-CHECKSUMS := $(DIST_DIR)/SHA256SUMS
+DIST_CHECKSUM := $(DIST_ARTIFACT).256
 
 TESTS_DIR := tests
 TEST_SCRIPTS := $(TESTS_DIR)/*.bats
@@ -54,14 +55,17 @@ build: $(SOURCE)
 	chmod 0755 "$(DIST_ARTIFACT).tmp"
 	mv "$(DIST_ARTIFACT).tmp" "$(DIST_ARTIFACT)"
 	@if command -v sha256sum >/dev/null 2>&1; then \
-		cd "$(DIST_DIR)" && sha256sum "$(notdir $(DEV_ARTIFACT))" "$(notdir $(DIST_ARTIFACT))" >"$(notdir $(CHECKSUMS)).tmp"; \
+		cd "$(DIST_DIR)" && sha256sum "$(notdir $(DEV_ARTIFACT))" >"$(notdir $(DEV_CHECKSUM)).tmp"; \
+		cd "$(DIST_DIR)" && sha256sum "$(notdir $(DIST_ARTIFACT))" >"$(notdir $(DIST_CHECKSUM)).tmp"; \
 	elif command -v shasum >/dev/null 2>&1; then \
-		cd "$(DIST_DIR)" && shasum -a 256 "$(notdir $(DEV_ARTIFACT))" "$(notdir $(DIST_ARTIFACT))" >"$(notdir $(CHECKSUMS)).tmp"; \
+		cd "$(DIST_DIR)" && shasum -a 256 "$(notdir $(DEV_ARTIFACT))" >"$(notdir $(DEV_CHECKSUM)).tmp"; \
+		cd "$(DIST_DIR)" && shasum -a 256 "$(notdir $(DIST_ARTIFACT))" >"$(notdir $(DIST_CHECKSUM)).tmp"; \
 	else \
 		printf '%s\n' 'No SHA-256 command is available for build checksums' >&2; \
 		exit 1; \
 	fi
-	mv "$(CHECKSUMS).tmp" "$(CHECKSUMS)"
+	mv "$(DEV_CHECKSUM).tmp" "$(DEV_CHECKSUM)"
+	mv "$(DIST_CHECKSUM).tmp" "$(DIST_CHECKSUM)"
 
 check:
 	bash -n "$(SOURCE)" $(TEST_HELPERS) "$(COMPAT_TEST)"
@@ -82,6 +86,7 @@ test-dev: build
 	test "$$(sed -n '1p' "$(DEV_ARTIFACT)")" = '#!/usr/bin/env bash'
 	BASHDEPS_EXECUTABLE="$(DEV_ARTIFACT)" bats $(TEST_SCRIPTS)
 	BASHDEPS_EXECUTABLE="$$(pwd)/$(DEV_ARTIFACT)" bash "$(COMPAT_TEST)"
+	cd "$(DIST_DIR)" && if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "$(notdir $(DEV_CHECKSUM))"; else shasum -a 256 -c "$(notdir $(DEV_CHECKSUM))"; fi
 
 test-dist: build
 	bash -n "$(DIST_ARTIFACT)"
@@ -89,7 +94,7 @@ test-dist: build
 	test "$$(sed -n '1p' "$(DIST_ARTIFACT)")" = '#!/usr/bin/env bash'
 	BASHDEPS_EXECUTABLE="$(DIST_ARTIFACT)" bats $(TEST_SCRIPTS)
 	BASHDEPS_EXECUTABLE="$$(pwd)/$(DIST_ARTIFACT)" bash "$(COMPAT_TEST)"
-	cd "$(DIST_DIR)" && if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "$(notdir $(CHECKSUMS))"; else shasum -a 256 -c "$(notdir $(CHECKSUMS))"; fi
+	cd "$(DIST_DIR)" && if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "$(notdir $(DIST_CHECKSUM))"; else shasum -a 256 -c "$(notdir $(DIST_CHECKSUM))"; fi
 
 clean:
 	rm -rf "$(DIST_DIR)"
