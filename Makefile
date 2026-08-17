@@ -55,11 +55,13 @@ build: $(SOURCE)
 	chmod 0755 "$(DIST_ARTIFACT).tmp"
 	mv "$(DIST_ARTIFACT).tmp" "$(DIST_ARTIFACT)"
 	@if command -v sha256sum >/dev/null 2>&1; then \
-		cd "$(DIST_DIR)" && sha256sum "$(notdir $(DEV_ARTIFACT))" >"$(notdir $(DEV_CHECKSUM)).tmp"; \
-		cd "$(DIST_DIR)" && sha256sum "$(notdir $(DIST_ARTIFACT))" >"$(notdir $(DIST_CHECKSUM)).tmp"; \
+		cd "$(DIST_DIR)"; \
+		sha256sum "$(notdir $(DEV_ARTIFACT))" >"$(notdir $(DEV_CHECKSUM)).tmp"; \
+		sha256sum "$(notdir $(DIST_ARTIFACT))" >"$(notdir $(DIST_CHECKSUM)).tmp"; \
 	elif command -v shasum >/dev/null 2>&1; then \
-		cd "$(DIST_DIR)" && shasum -a 256 "$(notdir $(DEV_ARTIFACT))" >"$(notdir $(DEV_CHECKSUM)).tmp"; \
-		cd "$(DIST_DIR)" && shasum -a 256 "$(notdir $(DIST_ARTIFACT))" >"$(notdir $(DIST_CHECKSUM)).tmp"; \
+		cd "$(DIST_DIR)"; \
+		shasum -a 256 "$(notdir $(DEV_ARTIFACT))" >"$(notdir $(DEV_CHECKSUM)).tmp"; \
+		shasum -a 256 "$(notdir $(DIST_ARTIFACT))" >"$(notdir $(DIST_CHECKSUM)).tmp"; \
 	else \
 		printf '%s\n' 'No SHA-256 command is available for build checksums' >&2; \
 		exit 1; \
