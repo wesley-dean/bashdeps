@@ -252,6 +252,14 @@ __bashdeps_hash_file() {
   printf '%s\n' "$digest"
 }
 
+__bashdeps_wget_has_required_controls() {
+  local help
+
+  help=$(wget --help 2>&1) || :
+  [[ $help == *'-T '* || $help == *'-T,'* ]] || return 1
+  [[ $help == *'-t '* || $help == *'-t,'* ]] || return 1
+}
+
 __bashdeps_select_download_backend() {
   if [[ -n $__bashdeps_download_backend ]]; then
     return 0
@@ -260,7 +268,7 @@ __bashdeps_select_download_backend() {
     __bashdeps_download_backend=curl
     return 0
   fi
-  if command -v wget >/dev/null 2>&1; then
+  if command -v wget >/dev/null 2>&1 && __bashdeps_wget_has_required_controls; then
     __bashdeps_download_backend=wget
     return 0
   fi
@@ -290,7 +298,7 @@ __bashdeps_download_once() {
         -- "$url"
       ;;
     wget)
-      wget -q -O "$candidate" "$url"
+      wget -q -T 120 -t 1 -O "$candidate" "$url"
       ;;
     *)
       return 3
@@ -398,11 +406,7 @@ __bashdeps_make_stage() {
 
   for ((attempt = 1; attempt <= 5; attempt++)); do
     candidate=$root/.bashdeps-stage.$$.$RANDOM
-    if mkdir "$candidate" 2>/dev/null; then
-      chmod 0700 "$candidate" 2>/dev/null || {
-        rm -rf "$candidate"
-        return 6
-      }
+    if mkdir -m 0700 "$candidate" 2>/dev/null; then
       __bashdeps_stage_dir=$candidate
       return 0
     fi
