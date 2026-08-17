@@ -20,9 +20,10 @@ The manifest itself cannot broaden the destination boundary.
 containment policy only: it tests whether the declared destination is permitted.
 It does not prepend to, rewrite, relocate, or otherwise transform `dest=`.
 
-This ADR supersedes earlier version 1 statements in ADR-002, ADR-005, and ADR-007
-that allowed any normalized repository-relative destination without an explicit
-CLI override.
+This ADR supersedes earlier version 1 statements in ADR-002 and ADR-005 that
+allowed any normalized repository-relative destination without an explicit CLI
+override.  ADR-007 incorporates this option into the public `bashdeps.bash`
+command surface.
 
 ## Context
 
@@ -124,12 +125,12 @@ the other destination validation and filesystem-safety checks.
 --dest-root PATH
 ```
 
-The version 1 command forms become:
+The version 1 command forms are:
 
 ```text
-bashdeps install [--dest-root PATH] KEY=VALUE...
-bashdeps sync [--dest-root PATH] [MANIFEST]
-bashdeps verify [--dest-root PATH] [MANIFEST]
+bashdeps.bash install [--dest-root PATH] KEY=VALUE...
+bashdeps.bash sync [--dest-root PATH] [MANIFEST]
+bashdeps.bash verify [--dest-root PATH] [MANIFEST]
 ```
 
 The option SHALL precede the manifest path or install declaration fields.
@@ -137,7 +138,7 @@ The option SHALL precede the manifest path or install declaration fields.
 For example:
 
 ```text
-bashdeps sync --dest-root assets dependencies.txt
+bashdeps.bash sync --dest-root assets dependencies.txt
 ```
 
 permits declarations such as:
@@ -197,7 +198,7 @@ otherwise transform `dest`.
 For example:
 
 ```text
-bashdeps sync --dest-root third_party dependencies.txt
+bashdeps.bash sync --dest-root third_party dependencies.txt
 ```
 
 requires records to declare:
@@ -230,7 +231,7 @@ Selecting a destination root does not replace any existing filesystem-safety
 rule.
 
 The project root remains the physical current working directory from which
-`bashdeps` is invoked.
+`bashdeps.bash` is invoked.
 
 Both the selected root and the complete destination path remain subject to the
 existing rules that reject:
@@ -338,7 +339,7 @@ for destination-root policy.  A demonstrated consumer need may justify one later
 
 - Supersedes destination-scope portions of: ADR-002
 - Supersedes destination-scope portions of: ADR-005
-- Supersedes command-form portions of: ADR-007
+- Related to: ADR-007
 - Related to: ADR-001
 - Related to: ADR-003
 - Related to: ADR-008
