@@ -32,14 +32,19 @@ custom parser for a hierarchical syntax:
 The original handoff proposed four positional fields separated by horizontal
 whitespace.  During architecture review, the project chose named `KEY=VALUE`
 fields instead.  Named fields improve readability, allow field order to be
-irrelevant, align naturally with a single-artifact `bashdeps install` command,
-and provide a deliberate extension path for future metadata such as an optional
-file mode without requiring positional-column changes.
+irrelevant, align naturally with a single-artifact `bashdeps.bash install`
+command, and provide a deliberate extension path for future metadata such as an
+optional file mode without requiring positional-column changes.
 
 The project has also established that SHA-256 remains mandatory even when
-upstream does not publish checksums, destinations may be any repository-relative
-path, dependency identity remains opaque to the Bash implementation, and managed
-artifacts are not assumed to be executable or textual.
+upstream does not publish checksums, dependency identity remains opaque to the
+Bash implementation, and managed artifacts are not assumed to be executable or
+textual.
+
+The original destination-scope decision in this ADR allowed any normalized
+repository-relative destination.  ADR-013 later supersedes that policy with a
+default `vendor/` destination root plus an explicit invocation-level
+`--dest-root` override.  The lexical `dest` grammar defined here remains in force.
 
 ## Decision Drivers
 
@@ -49,7 +54,6 @@ artifacts are not assumed to be executable or textual.
 - Make field ordering irrelevant.
 - Keep the format straightforward for tools such as Renovate to inspect later.
 - Preserve exact byte verification as a mandatory property.
-- Permit destinations outside `vendor/` without permitting path escape.
 - Permit `=` characters inside field values, especially URLs.
 - Provide a controlled path for adding future named fields.
 - Reject ambiguous or permissive syntax rather than guessing user intent.
@@ -209,9 +213,6 @@ Absolute paths SHALL be rejected.
 
 Paths containing a `..` path component SHALL be rejected.
 
-A destination SHALL NOT be required to live beneath `vendor/`.  A consuming
-repository may declare another repository-relative location when appropriate.
-
 Destination paths SHALL be unique within a manifest.  Two identities SHALL NOT
 map to the same destination.
 
@@ -221,6 +222,11 @@ the complete manifest has passed validation.
 Publication through symbolic-link path components SHALL be rejected as defined
 by the filesystem-safety ADR.  This grammar ADR establishes only that the textual
 destination must be repository-relative and traversal-free.
+
+ADR-013 adds the invocation-level destination-root policy.  By default, a valid
+version 1 `dest` must be strictly beneath `vendor/`; an explicit `--dest-root`
+option may select a different permitted subtree without rewriting the `dest`
+value.
 
 ### `digest`
 
@@ -279,24 +285,24 @@ This distinction matters because a manifest record is not itself a shell command
 For example, `&` may appear literally inside a URL in `dependencies.txt` without
 being treated as a shell control operator.
 
-### Relationship to `bashdeps install`
+### Relationship to `bashdeps.bash install`
 
 The named manifest fields SHALL intentionally correspond to the named arguments
 accepted by the single-artifact command described in ADR-003:
 
 ```text
-bashdeps install id=VALUE url=VALUE dest=VALUE digest=VALUE
+bashdeps.bash install id=VALUE url=VALUE dest=VALUE digest=VALUE
 ```
 
 This symmetry is a usability property, not an instruction to execute manifest
 lines as shell source.
 
 When a human enters an `install` command through an interactive shell, ordinary
-shell quoting rules apply before `bashdeps` receives the arguments.  A value
+shell quoting rules apply before `bashdeps.bash` receives the arguments.  A value
 containing shell metacharacters may therefore require quoting, for example:
 
 ```bash
-bashdeps install \
+bashdeps.bash install \
   id=example@1.0.0 \
   'url=https://example.com/download?foo=bar&baz=quux' \
   dest=vendor/example \
@@ -304,7 +310,7 @@ bashdeps install \
 ```
 
 `sync` SHALL parse manifest records as data and SHALL NOT construct, `eval`, or
-execute command strings by prefixing manifest lines with `bashdeps install`.
+execute command strings by prefixing manifest lines with `bashdeps.bash install`.
 Shared implementation logic may be used internally without re-entering the shell
 parser.
 
@@ -313,7 +319,7 @@ parser.
 The CLI SHALL accept an explicit manifest path where the operation supports a
 manifest argument.
 
-When no manifest path is supplied, `bashdeps` SHALL use:
+When no manifest path is supplied, `bashdeps.bash` SHALL use:
 
 ```text
 dependencies.txt
@@ -372,10 +378,10 @@ the digest of the exact approved artifact itself.
 
 ### Restrict destinations to `vendor/`
 
-This would create a stronger repository convention but is not required for safe
-artifact materialization.  Consumers may have legitimate repository-relative
-locations outside `vendor/`.  Path safety is enforced directly rather than by
-requiring one directory name.
+The original grammar review rejected coupling every destination to `vendor/`.
+ADR-013 later revisited that decision from a security-boundary perspective and
+established `vendor/` as the default permitted destination root while retaining an
+explicit `--dest-root` override for legitimate alternate trees.
 
 ### Permit inline comments
 
@@ -435,5 +441,6 @@ Subsequent ADRs need to define:
 - Related to: ADR-000
 - Related to: ADR-001
 - Related to: ADR-003
+- Superseded in destination scope by: ADR-013
 - Derived from: `bash-dependency-manifest-handoff.md`
 - Derived from: `bash-dependency-convergence-handoff.md`
