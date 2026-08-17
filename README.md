@@ -40,6 +40,12 @@ Downloader preference is:
 curl -> wget -> failure
 ```
 
+Version 1 considers a `wget` fallback usable only when its help surface advertises
+both `-T` timeout control and `-t` tries control.  The adapter uses `-T 120 -t 1`
+so one Wget invocation represents one bounded bashdeps acquisition attempt.  A
+minimal BusyBox build that lacks those controls is rejected rather than used with
+weaker network bounds.  See ADR-012 for the rationale and compatibility boundary.
+
 SHA-256 command preference is:
 
 ```text
