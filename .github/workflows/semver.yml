@@ -67,5 +67,6 @@ jobs:
           prerelease: false
           files: |
             dist/bashdeps.dev.bash
+            dist/bashdeps.dev.bash.256
             dist/bashdeps.bash
-            dist/SHA256SUMS
+            dist/bashdeps.bash.256
