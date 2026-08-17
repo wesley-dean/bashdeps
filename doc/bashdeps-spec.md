@@ -3,7 +3,8 @@
 ## Purpose
 
 `bashdeps` materializes exact, SHA-256-pinned external artifacts at declared
-repository-relative destinations.
+project-relative destinations subject to an invocation-level destination-root
+policy.
 
 It is deliberately narrower than a package manager.  It does not resolve
 versions, discover releases, execute install hooks, construct dependency graphs,
@@ -131,8 +132,8 @@ Other schemes are invalid in version 1.
 
 ### dest
 
-`dest` names an ordinary file relative to the physical current working directory
-from which bashdeps is invoked.
+`dest` names the complete ordinary-file destination relative to the physical
+current working directory from which bashdeps is invoked.
 
 It is not relative to the manifest file and bashdeps does not discover a Git
 repository root.
@@ -143,7 +144,35 @@ A destination must:
 - be relative;
 - not begin or end with `/`;
 - not contain repeated `/` separators;
-- not contain a component equal to `.` or `..`.
+- not contain whitespace;
+- not contain a component equal to `.` or `..`;
+- be strictly beneath the selected destination root.
+
+By default, the selected destination root is:
+
+```text
+vendor
+```
+
+Therefore these are valid by default:
+
+```text
+dest=vendor/tool.bash
+dest=vendor/templates/report.tmpl
+```
+
+while these are invalid by default:
+
+```text
+dest=Makefile
+dest=src/generated.bash
+dest=vendor-old/tool.bash
+dest=vendor
+```
+
+Containment is evaluated at a path-component boundary.  A destination under
+`vendor-old/` therefore does not satisfy the default `vendor/` policy merely
+because the strings share a prefix.
 
 Existing symbolic links in any destination path component are rejected.
 An existing final destination must be a regular file and must not be a symbolic
@@ -163,16 +192,81 @@ An upstream project does not need to publish the digest.  The consuming project
 may calculate and commit the SHA-256 digest of the exact artifact it reviewed and
 approved.
 
+When upstream publishes a SHA-256 checksum, the consuming project may use that
+published value as the committed `digest=` value.  Synchronization still trusts
+the committed declaration; bashdeps does not dynamically replace it with a live
+upstream checksum.
+
 Digest equality establishes byte identity with the committed declaration.  It
 does not establish that the upstream software is safe, correctly versioned, or
 free from vulnerabilities.
+
+## Destination Root Policy
+
+The default destination root is `vendor`.
+
+`install`, `sync`, and `verify` accept an explicit invocation-level override:
+
+```text
+--dest-root PATH
+```
+
+The option must precede the manifest path or install declaration fields.
+
+The selected root is a containment rule only.  It does not prepend to, rewrite,
+or otherwise transform `dest`.
+
+For example:
+
+```text
+bashdeps sync --dest-root assets dependencies.txt
+```
+
+permits:
+
+```text
+dest=assets/logo.png
+```
+
+and rejects:
+
+```text
+dest=vendor/tool.bash
+dest=Makefile
+```
+
+The same manifest declaration always names the same project-relative path.  A
+caller cannot relocate it merely by changing `--dest-root`.
+
+The selected root must itself be a normalized project-relative path after
+trailing slash normalization.  It must be non-empty and must not:
+
+- be absolute;
+- contain whitespace;
+- contain repeated internal `/` separators;
+- contain a component equal to `.` or `..`.
+
+One or more trailing `/` characters on `--dest-root` are ignored before
+validation, so these are equivalent:
+
+```text
+--dest-root vendor
+--dest-root vendor/
+```
+
+Nested roots such as `third_party/vendor` are permitted.
+
+The destination root is invocation policy rather than manifest data.  Version 1
+does not define a `dest-root=` manifest field.
+
+See ADR-013 for the rationale and superseded destination-scope decisions.
 
 ## Commands
 
 ### install
 
 ```text
-bashdeps install id=... url=... dest=... digest=...
+bashdeps install [--dest-root PATH] id=... url=... dest=... digest=...
 ```
 
 `install` materializes one explicitly declared artifact.
@@ -181,31 +275,36 @@ The CLI fields use the same grammar as one manifest record.  Callers invoking th
 command through a shell must quote arguments when ordinary shell syntax requires
 it; for example, a URL containing `&` should be passed as one quoted argument.
 
-If the existing destination is a valid ordinary file whose SHA-256 digest already
-matches, `install` succeeds without network access or mutation.
+If the existing destination is a valid ordinary file within the selected root
+whose SHA-256 digest already matches, `install` succeeds without network access or
+mutation.
 
 Otherwise, `install`:
 
-1. validates the complete declaration and destination path;
-2. acquires a candidate into private staging;
-3. verifies the candidate SHA-256 digest;
-4. creates required parent directories only after verification;
-5. publishes the verified bytes conservatively;
-6. sets a newly published file to mode `0644`;
-7. re-hashes the final destination;
-8. succeeds only if the final bytes match the declaration.
+1. validates the selected destination root and complete declaration;
+2. verifies that the declared destination is strictly beneath the selected root;
+3. acquires a candidate into private staging;
+4. verifies the candidate SHA-256 digest;
+5. creates required parent directories only after verification;
+6. publishes the verified bytes conservatively;
+7. sets a newly published file to mode `0644`;
+8. re-hashes the final destination;
+9. succeeds only if the final bytes match the declaration.
 
 ### verify
 
 ```text
-bashdeps verify [MANIFEST]
+bashdeps verify [--dest-root PATH] [MANIFEST]
 ```
 
-The default manifest is `dependencies.txt`.
+The default manifest is `dependencies.txt` and the default destination root is
+`vendor`.
 
 `verify`:
 
+- validates the selected destination root;
 - parses and validates the complete manifest;
+- rejects any declaration outside the selected destination root;
 - performs no network access;
 - intentionally performs no filesystem mutation;
 - verifies that every declared destination exists as an acceptable regular file;
@@ -218,25 +317,28 @@ A valid empty manifest verifies successfully.
 ### sync
 
 ```text
-bashdeps sync [MANIFEST]
+bashdeps sync [--dest-root PATH] [MANIFEST]
 ```
 
-The default manifest is `dependencies.txt`.
+The default manifest is `dependencies.txt` and the default destination root is
+`vendor`.
 
 `sync` converges the complete manifest-defined set.
 
 It:
 
-1. parses and validates the whole manifest;
-2. validates filesystem safety for every declared destination;
-3. hashes existing destinations;
-4. reuses destinations whose bytes already match;
-5. identifies missing or mismatched destinations;
-6. acquires all required candidates into private staging;
-7. verifies every required candidate before intentional publication begins;
-8. creates missing parent directories only after candidate preflight succeeds;
-9. publishes verified candidates;
-10. performs a final verification of every declared destination.
+1. validates the selected destination root;
+2. parses and validates the whole manifest;
+3. rejects any declaration outside the selected root;
+4. validates filesystem safety for every declared destination;
+5. hashes existing destinations;
+6. reuses destinations whose bytes already match;
+7. identifies missing or mismatched destinations;
+8. acquires all required candidates into private staging;
+9. verifies every required candidate before intentional publication begins;
+10. creates missing parent directories only after candidate preflight succeeds;
+11. publishes verified candidates;
+12. performs a final verification of every declared destination.
 
 `sync` does not literally execute `bashdeps install` once per manifest line.
 `install` and `sync` share internal logic, while `sync` preserves whole-manifest
@@ -317,13 +419,18 @@ version label substitutes for SHA-256 equality.
 
 ## Filesystem Behavior
 
+The physical current working directory is the project root for one invocation.
+The selected destination root is a project-relative security boundary within that
+project root.
+
 Network candidates are staged away from final destinations.
 
 For multi-record `sync`, all candidates required by the current operation are
 acquired and verified before intentional publication begins.
 
 Before publication, existing path components are checked for symbolic links.
-Missing parent directories may then be created.
+Missing parent directories beneath the selected destination root may then be
+created automatically.
 
 A verified candidate is copied to a destination-adjacent temporary ordinary file,
 set to mode `0644`, and replaced into the final path using rename-style behavior
@@ -345,7 +452,7 @@ The public exit status contract is:
 ```text
 0  success, help, or version output
 1  verify completed but one or more destinations are missing or mismatched
-2  invalid CLI usage, invalid manifest, or invalid dependency declaration
+2  invalid CLI usage, invalid manifest, invalid dependency declaration, or invalid destination-root policy
 3  required runtime capability is unavailable or unusable
 4  network acquisition failed
 5  acquired candidate bytes do not match the approved digest
@@ -354,6 +461,9 @@ The public exit status contract is:
 
 A malformed digest is status 2.  A syntactically valid declaration whose acquired
 candidate hashes differently is status 5.
+
+An invalid `--dest-root` value or a declaration outside the selected destination
+root is status 2 because the operation has not reached filesystem publication.
 
 ## Public Interface Boundary
 
@@ -401,6 +511,14 @@ make deps        bootstrap bashdeps if needed, then bashdeps sync
 make deps-check  verify using an already-present valid bashdeps bootstrap artifact
 make build       build only from current local inputs
 make all         deps, then build
+```
+
+Projects that intentionally use a dependency tree other than `vendor/` should
+make the destination-root policy explicit in their Make targets, for example:
+
+```text
+bashdeps sync --dest-root third_party dependencies.txt
+bashdeps verify --dest-root third_party dependencies.txt
 ```
 
 The bashdeps bootstrap artifact itself remains outside `dependencies.txt` and must
