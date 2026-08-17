@@ -8,9 +8,9 @@ Proposed
 
 ## Intent and Documentation Posture
 
-This ADR defines the three core dependency-state operations exposed by
-`bashdeps`: single-artifact installation, manifest synchronization, and manifest
-verification.
+This ADR defines the three core dependency-state operations exposed by the
+`bashdeps.bash` CLI: single-artifact installation, manifest synchronization, and
+manifest verification.
 
 The central invariant is that dependency state is judged by the bytes declared
 through named dependency fields.  Presence, filename, version labels, or
@@ -47,7 +47,7 @@ id=dep@1.0.0 url=https://example.com/dep dest=vendor/dep digest=sha256:aaaaaaaaa
 corresponds conceptually to:
 
 ```text
-bashdeps install id=dep@1.0.0 url=https://example.com/dep dest=vendor/dep digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+bashdeps.bash install id=dep@1.0.0 url=https://example.com/dep dest=vendor/dep digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
 
 This relationship should be preserved because it keeps the file format and CLI
@@ -59,10 +59,14 @@ A separate verification operation is also needed for offline or diagnostic use.
 Verification should answer whether the current local state already satisfies the
 manifest without attempting to repair it.
 
-The project has also decided that `bashdeps` does not claim ownership of a
+The project has also decided that bashdeps does not claim ownership of a
 consumer's `vendor/` directory or any other broad tree.  Version 1 therefore
 manages only destinations explicitly declared by the current operation and does
 not prune undeclared files.
+
+ADR-013 adds a destination-root security policy around these operations.  The
+complete `dest=` value remains part of the declaration, while `vendor/` is the
+default permitted root unless the caller explicitly supplies `--dest-root`.
 
 Concurrency control is intentionally outside the version 1 problem space.  This
 ADR neither guarantees correctness for concurrent mutating invocations nor adds a
@@ -87,13 +91,15 @@ locking protocol.
 The initial public dependency-state commands SHALL be:
 
 ```text
-bashdeps install id=VALUE url=VALUE dest=VALUE digest=VALUE
-bashdeps sync [MANIFEST]
-bashdeps verify [MANIFEST]
+bashdeps.bash install [--dest-root PATH] id=VALUE url=VALUE dest=VALUE digest=VALUE
+bashdeps.bash sync [--dest-root PATH] [MANIFEST]
+bashdeps.bash verify [--dest-root PATH] [MANIFEST]
 ```
 
 The four named `install` fields SHALL use the same names, field-specific grammar,
 and order-independent semantics defined for one manifest record by ADR-002.
+
+Destination-root selection and containment semantics SHALL follow ADR-013.
 
 When `MANIFEST` is omitted, `sync` and `verify` SHALL use:
 
@@ -126,18 +132,19 @@ It SHALL:
 1. parse and validate the complete set of named arguments before network access
    or destination mutation;
 2. require each version 1 field exactly once;
-3. inspect the declared destination and calculate its digest when present;
-4. return success without network access when the destination already contains
+3. enforce the selected destination-root policy before acquisition;
+4. inspect the declared destination and calculate its digest when present;
+5. return success without network access when the destination already contains
    the approved bytes;
-5. acquire a missing or mismatched artifact into project-controlled staging;
-6. verify the candidate against the declared SHA-256 digest before publication;
-7. preserve an existing mismatched destination until a verified replacement is
+6. acquire a missing or mismatched artifact into project-controlled staging;
+7. verify the candidate against the declared SHA-256 digest before publication;
+8. preserve an existing mismatched destination until a verified replacement is
    ready;
-8. create missing destination parent directories only after argument validation
-   has succeeded and when needed for publication;
-9. publish only verified candidate bytes;
-10. verify the resulting destination after publication;
-11. return success only when the destination contains the approved bytes.
+9. create missing destination parent directories only after argument validation
+   and candidate verification have succeeded and when needed for publication;
+10. publish only verified candidate bytes;
+11. verify the resulting destination after publication;
+12. return success only when the destination contains the approved bytes.
 
 `install` MAY use the network when the declared artifact is missing or does not
 match its approved digest.
@@ -152,11 +159,12 @@ file or infer that the file should be executable.
 `verify` SHALL:
 
 1. parse and validate the complete manifest;
-2. inspect every declared destination;
-3. calculate each existing destination's SHA-256 digest;
-4. confirm that every declared dependency is present and matches its approved
+2. enforce the selected destination-root policy for every declaration;
+3. inspect every declared destination;
+4. calculate each existing destination's SHA-256 digest;
+5. confirm that every declared dependency is present and matches its approved
    digest;
-5. return success only when all declared dependencies satisfy the manifest.
+6. return success only when all declared dependencies satisfy the manifest.
 
 `verify` SHALL perform no network access.
 
@@ -183,20 +191,22 @@ command sequentially for each line.
 
 1. parse and validate the complete manifest before dependency acquisition or
    publication;
-2. detect duplicate identities, duplicate destinations, malformed records, and
+2. enforce the selected destination-root policy for every declaration;
+3. detect duplicate identities, duplicate destinations, malformed records, and
    other manifest errors before mutation;
-3. inspect each declared destination and calculate its digest when present;
-4. accept already-correct destinations without downloading replacements;
-5. identify missing or mismatched destinations as requiring acquisition;
-6. acquire every required replacement candidate into project-controlled staging;
-7. verify every acquired candidate against its declared SHA-256 digest;
-8. avoid intentional publication of the staged replacement set if any candidate
+4. inspect each declared destination and calculate its digest when present;
+5. accept already-correct destinations without downloading replacements;
+6. identify missing or mismatched destinations as requiring acquisition;
+7. acquire every required replacement candidate into project-controlled staging;
+8. verify every acquired candidate against its declared SHA-256 digest;
+9. avoid intentional publication of the staged replacement set if any candidate
    fails acquisition or verification;
-9. create missing destination parent directories only after complete manifest
-   validation has succeeded and when needed for publication;
-10. publish only verified candidate bytes;
-11. perform a final verification of every declared destination after publication;
-12. return success only when the resulting declared dependency state satisfies
+10. create missing destination parent directories only after complete manifest
+    validation and candidate preflight have succeeded and when needed for
+    publication;
+11. publish only verified candidate bytes;
+12. perform a final verification of every declared destination after publication;
+13. return success only when the resulting declared dependency state satisfies
     the manifest.
 
 An existing mismatched destination SHALL remain untouched until its replacement
@@ -211,7 +221,7 @@ destination merely because that destination is stale.
 verification, and publication helpers where practical.
 
 `sync` SHALL NOT implement that reuse by constructing shell command strings,
-prefixing manifest text with `bashdeps install`, invoking `eval`, sourcing
+prefixing manifest text with `bashdeps.bash install`, invoking `eval`, sourcing
 manifest lines, or otherwise passing manifest content back through a shell
 parser.
 
@@ -233,7 +243,7 @@ tree becomes ordinary undeclared repository state.  Cleanup belongs to the
 consumer's Makefile, `make clean`, explicit project policy, or a future operation
 with separately defined deletion semantics.
 
-This decision follows the narrower ownership model: `bashdeps` manages the paths
+This decision follows the narrower ownership model: bashdeps manages the paths
 currently declared to it rather than claiming ownership of an entire directory
 tree.
 
@@ -297,7 +307,7 @@ defines a useful one-artifact operation.  `install` gives callers a direct way t
 materialize a dependency without constructing a temporary manifest and provides
 a clear conceptual unit beneath manifest synchronization.
 
-### Implement `sync` as a literal loop over `bashdeps install`
+### Implement `sync` as a literal loop over `bashdeps.bash install`
 
 This would make the relationship between manifest records and the CLI especially
 literal.
@@ -326,7 +336,7 @@ reason about and blur command intent.  Repair belongs to `sync` or `install`.
 ### Prune undeclared files automatically
 
 Automatic pruning provides stronger whole-tree convergence when a tool owns a
-managed root.  `bashdeps` does not claim such ownership in version 1, so deleting
+managed root.  Bashdeps does not claim such ownership in version 1, so deleting
 undeclared repository files would be an unnecessarily broad mutation.
 
 ### Skip final verification after publication
@@ -344,8 +354,8 @@ state, stale-lock handling, portability decisions, and failure semantics.
 
 ## Consequences
 
-A manifest record and an explicit `install` invocation use the same named
-properties, reducing the conceptual gap between file-based and direct use.
+A manifest record and an explicit `bashdeps.bash install` invocation use the same
+named properties, reducing the conceptual gap between file-based and direct use.
 
 Repeated `sync` and `install` operations avoid network access for dependencies
 whose existing bytes already match their declaration.
@@ -353,8 +363,8 @@ whose existing bytes already match their declaration.
 Stale, modified, or corrupted destinations are detected uniformly through digest
 comparison without special version-upgrade logic.
 
-Offline users can run `verify` without risk of network access or intentional
-mutation.
+Offline users can run `bashdeps.bash verify` without risk of network access or
+intentional mutation.
 
 Whole-manifest `sync` retains stronger preflight behavior than a literal
 line-by-line sequence of public `install` invocations.
@@ -393,4 +403,6 @@ Subsequent ADRs need to define:
 - Related to: ADR-000
 - Related to: ADR-001
 - Related to: ADR-002
+- Related to: ADR-007
+- Related to: ADR-013
 - Derived from: `bash-dependency-convergence-handoff.md`
