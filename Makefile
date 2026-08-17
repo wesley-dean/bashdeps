@@ -17,11 +17,16 @@ TEST_SCRIPTS := $(TESTS_DIR)/*.bats
 TEST_HELPERS := $(TESTS_DIR)/test_helper.bash
 COMPAT_TEST := $(TESTS_DIR)/compat-bash.bash
 
+VENDOR_DIR := vendor
+DOXYGEN_BASH_FILTER := $(VENDOR_DIR)/doxygen-bash.awk
+DOXYGEN_BASH_FILTER_URL := https://raw.githubusercontent.com/wesley-dean/bash-doxygen/refs/heads/main/doxygen-bash.awk
+REFERENCE_DOC_DIR := doc/reference
+
 VERSION ?= 0.0.0-dev
 BUILD_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')
 BUILD_DATE ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || printf 'unknown')
 
-.PHONY: all build check clean format test test-source test-dev test-dist
+.PHONY: all build check clean distclean docs docs-clean docs-stage format test test-source test-dev test-dist
 
 all: build
 
@@ -101,5 +106,42 @@ test-dist: build
 	cd "$(DIST_DIR)" && if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "$(notdir $(DIST_CHECKSUM))"; else shasum -a 256 -c "$(notdir $(DIST_CHECKSUM))"; fi
 	test ! -e "$(LEGACY_CHECKSUMS)"
 
+##
+# Download the Bash Doxygen filter used to preprocess maintained shell source.
+#
+$(DOXYGEN_BASH_FILTER):
+	mkdir -p "$(VENDOR_DIR)"
+	curl -fsSL "$(DOXYGEN_BASH_FILTER_URL)" -o "$@.tmp"
+	chmod 0755 "$@.tmp"
+	mv "$@.tmp" "$@"
+
+##
+# Remove generated reference documentation while preserving its README sentinel.
+#
+docs-clean:
+	@if [[ -d "$(REFERENCE_DOC_DIR)" ]]; then \
+		find "$(REFERENCE_DOC_DIR)" -mindepth 1 ! -name README.md -exec rm -rf {} +; \
+	fi
+
+##
+# Generate browsable Doxygen reference documentation from maintained Bash source.
+#
+docs: docs-clean $(DOXYGEN_BASH_FILTER)
+	mkdir -p "$(REFERENCE_DOC_DIR)"
+	doxygen Doxyfile
+
+##
+# Regenerate reference documentation and stage the complete generated change set.
+#
+docs-stage: docs
+	git add -A "$(REFERENCE_DOC_DIR)"
+
 clean:
 	rm -rf "$(DIST_DIR)"
+
+##
+# Remove ordinary build output, generated reference docs, and downloaded docs tooling.
+#
+distclean: clean docs-clean
+	$(RM) -f "$(DOXYGEN_BASH_FILTER)"
+	-rmdir "$(VENDOR_DIR)" >/dev/null 2>&1
