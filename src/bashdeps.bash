@@ -21,13 +21,14 @@ __bashdeps_digests=()
 __bashdeps_stage_dir=''
 __bashdeps_hash_backend=''
 __bashdeps_download_backend=''
+__bashdeps_dest_root='vendor'
 
 __bashdeps_usage() {
   printf '%s\n' \
     'Usage:' \
-    '  bashdeps install id=IDENTITY url=HTTPS_URL dest=RELATIVE_PATH digest=sha256:HEX' \
-    '  bashdeps sync [MANIFEST]' \
-    '  bashdeps verify [MANIFEST]' \
+    '  bashdeps install [--dest-root PATH] id=IDENTITY url=HTTPS_URL dest=RELATIVE_PATH digest=sha256:HEX' \
+    '  bashdeps sync [--dest-root PATH] [MANIFEST]' \
+    '  bashdeps verify [--dest-root PATH] [MANIFEST]' \
     '  bashdeps help' \
     '  bashdeps version'
 }
@@ -43,21 +44,48 @@ __bashdeps_reset_record() {
   __bashdeps_record_digest=''
 }
 
-__bashdeps_validate_dest_text() {
-  local dest component
+__bashdeps_validate_path_text() {
+  local path component
   local -a components
 
-  dest=$1
-  [[ -n $dest ]] || return 1
-  [[ $dest != /* ]] || return 1
-  [[ $dest != */ ]] || return 1
-  [[ $dest != *//* ]] || return 1
+  path=$1
+  [[ -n $path ]] || return 1
+  [[ $path != /* ]] || return 1
+  [[ $path != */ ]] || return 1
+  [[ $path != *//* ]] || return 1
+  [[ ! $path =~ [[:space:]] ]] || return 1
 
-  IFS='/' read -r -a components <<<"$dest"
+  IFS='/' read -r -a components <<<"$path"
   for component in "${components[@]}"; do
     [[ -n $component ]] || return 1
     [[ $component != '.' && $component != '..' ]] || return 1
   done
+}
+
+__bashdeps_validate_dest_text() {
+  __bashdeps_validate_path_text "$1"
+}
+
+__bashdeps_set_dest_root() {
+  local root
+  root=$1
+
+  while [[ $root == */ ]]; do
+    root=${root%/}
+  done
+
+  __bashdeps_validate_path_text "$root" || {
+    __bashdeps_diag "invalid destination root: $1"
+    return 2
+  }
+
+  __bashdeps_dest_root=$root
+}
+
+__bashdeps_dest_within_root() {
+  local dest
+  dest=$1
+  [[ $dest == "$__bashdeps_dest_root/"* ]]
 }
 
 __bashdeps_validate_record() {
@@ -85,6 +113,11 @@ __bashdeps_validate_record() {
 
   __bashdeps_validate_dest_text "$__bashdeps_record_dest" || {
     __bashdeps_diag "dependency $__bashdeps_record_id has an invalid destination: $__bashdeps_record_dest"
+    return 2
+  }
+
+  __bashdeps_dest_within_root "$__bashdeps_record_dest" || {
+    __bashdeps_diag "dependency $__bashdeps_record_id destination is outside allowed root $__bashdeps_dest_root: $__bashdeps_record_dest"
     return 2
   }
 
@@ -567,6 +600,17 @@ __bashdeps_sync_loaded() {
 
 __bashdeps_cmd_install() {
   local root
+  __bashdeps_dest_root='vendor'
+
+  if [[ ${1:-} == '--dest-root' ]]; then
+    (($# >= 2)) || {
+      __bashdeps_diag '--dest-root requires a path'
+      return 2
+    }
+    __bashdeps_set_dest_root "$2" || return $?
+    shift 2
+  fi
+
   (($# > 0)) || {
     __bashdeps_diag 'install requires one dependency declaration'
     return 2
@@ -583,6 +627,17 @@ __bashdeps_cmd_install() {
 
 __bashdeps_cmd_sync() {
   local manifest root
+  __bashdeps_dest_root='vendor'
+
+  if [[ ${1:-} == '--dest-root' ]]; then
+    (($# >= 2)) || {
+      __bashdeps_diag '--dest-root requires a path'
+      return 2
+    }
+    __bashdeps_set_dest_root "$2" || return $?
+    shift 2
+  fi
+
   (($# <= 1)) || {
     __bashdeps_diag 'sync accepts at most one manifest path'
     return 2
@@ -595,6 +650,17 @@ __bashdeps_cmd_sync() {
 
 __bashdeps_cmd_verify() {
   local manifest root
+  __bashdeps_dest_root='vendor'
+
+  if [[ ${1:-} == '--dest-root' ]]; then
+    (($# >= 2)) || {
+      __bashdeps_diag '--dest-root requires a path'
+      return 2
+    }
+    __bashdeps_set_dest_root "$2" || return $?
+    shift 2
+  fi
+
   (($# <= 1)) || {
     __bashdeps_diag 'verify accepts at most one manifest path'
     return 2
