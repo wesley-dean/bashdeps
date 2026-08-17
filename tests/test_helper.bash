@@ -86,17 +86,34 @@ bashdeps_make_mock_wget() {
   cat >"$BASHDEPS_TEST_PROJECT/isolated-bin/wget" <<'MOCK'
 #!/bin/bash
 set -eu
+if [[ ${1:-} == '--help' ]]; then
+  printf '%s\n' 'usage: wget [-q] [-T SEC] [-t TRIES] [-O FILE] URL'
+  exit 0
+fi
 out=''
 url=''
 while (($#)); do
   case $1 in
     -q) shift ;;
+    -T | -t) shift 2 ;;
     -O) out=$2; shift 2 ;;
     *) url=$1; shift ;;
   esac
 done
 [[ -n $out && -n $url ]]
 cp "$MOCK_SOURCE" "$out"
+MOCK
+  chmod +x "$BASHDEPS_TEST_PROJECT/isolated-bin/wget"
+}
+
+bashdeps_make_incapable_mock_wget() {
+  cat >"$BASHDEPS_TEST_PROJECT/isolated-bin/wget" <<'MOCK'
+#!/bin/bash
+if [[ ${1:-} == '--help' ]]; then
+  printf '%s\n' 'usage: wget [-q] [-O FILE] URL'
+  exit 0
+fi
+exit 99
 MOCK
   chmod +x "$BASHDEPS_TEST_PROJECT/isolated-bin/wget"
 }
