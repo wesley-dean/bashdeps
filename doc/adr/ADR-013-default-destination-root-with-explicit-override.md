@@ -16,6 +16,10 @@ The default destination root is `vendor/`.  Callers may select a different
 project-relative destination root for one invocation with `--dest-root PATH`.
 The manifest itself cannot broaden the destination boundary.
 
+`dest=` remains the complete project-relative destination.  `--dest-root` is a
+containment policy only: it tests whether the declared destination is permitted.
+It does not prepend to, rewrite, relocate, or otherwise transform `dest=`.
+
 This ADR supersedes earlier version 1 statements in ADR-002, ADR-005, and ADR-007
 that allowed any normalized repository-relative destination without an explicit
 CLI override.
@@ -36,9 +40,21 @@ dedicated `vendor/` tree.  Making that convention the default security boundary
 reduces the blast radius of an accidental or malicious manifest change while
 retaining an explicit mechanism for projects that use another dedicated tree.
 
-The resulting model is conceptually similar to a configurable installation
-`PREFIX`, with one important distinction: `--dest-root` constrains the declared
-`dest=` value; it does not rewrite or prepend text to that value.
+During design review, two meanings for `--dest-root` were considered:
+
+1. treat it as a prefix that is prepended to the manifest's `dest=` value; or
+2. treat it as a security boundary against which the complete `dest=` value is
+   tested.
+
+The containment model better satisfies the principle of least surprise for this
+project.  A reviewer who sees `dest=vendor/mktext.bash` in the manifest should be
+able to conclude that the intended final path is `vendor/mktext.bash` without
+also inspecting Makefiles, CI commands, or invocation flags for an additional
+path prefix.
+
+This differs deliberately from traditional installation `PREFIX` behavior.
+`--dest-root` selects the permitted destination namespace; it does not select a
+relocation prefix.
 
 ## Decision Drivers
 
@@ -51,6 +67,10 @@ The resulting model is conceptually similar to a configurable installation
   protections.
 - Avoid adding `realpath` as a new mandatory runtime dependency.
 - Keep destination semantics deterministic and easy to review.
+- Follow the principle of least surprise: `dest=` should visibly name the path
+  that bashdeps will actually manage.
+- Avoid invocation options that silently relocate otherwise unchanged manifest
+  records.
 
 ## Decision
 
@@ -76,11 +96,25 @@ dest=Makefile
 dest=src/generated.bash
 dest=assets/logo.png
 dest=vendor
+dest=vendor-old/tool.bash
 ```
 
 The destination root itself is a directory boundary and SHALL NOT be accepted as
 a file destination.  A valid destination therefore contains at least one path
 component beneath the selected root.
+
+Containment SHALL be tested at a path-component boundary.  An implementation
+MUST NOT use a naïve string-prefix test that would cause a root such as `vendor`
+to permit a destination such as `vendor-old/tool.bash`.
+
+Conceptually, after destination-root normalization, containment is equivalent to:
+
+```bash
+[[ $dest == "$dest_root/"* ]]
+```
+
+This expression illustrates the required component boundary; it does not replace
+the other destination validation and filesystem-safety checks.
 
 ### Explicit alternate root
 
@@ -123,24 +157,42 @@ dest=/etc/passwd
 
 for that invocation.
 
-The selected destination root SHALL be a normalized project-relative path.  It
-SHALL be non-empty and SHALL NOT:
+The selected destination root SHALL be a project-relative path.  It SHALL be
+non-empty and SHALL NOT:
 
 - be absolute;
 - contain whitespace;
-- begin or end with `/`;
-- contain repeated `/` separators;
+- contain repeated `/` separators within the path;
 - contain a component equal to `.` or `..`.
 
 Nested roots such as `third_party/vendor` MAY be selected.
+
+For ordinary directory-argument ergonomics, one or more trailing `/` characters
+MAY be supplied and SHALL be removed before validation and containment testing.
+These forms are therefore equivalent:
+
+```text
+--dest-root vendor
+--dest-root vendor/
+```
+
+and both select the normalized root:
+
+```text
+vendor
+```
+
+Trailing-slash normalization does not permit an absolute path, traversal,
+interior repeated separators, or any other otherwise-invalid root.  For example,
+`/vendor`, `vendor/../other`, and `third_party//vendor` remain invalid.
 
 An invalid `--dest-root` value is invalid CLI input and SHALL return status 2.
 
 ### Manifest relationship
 
 The manifest SHALL continue to contain the complete project-relative `dest`
-value.  `--dest-root` SHALL NOT prepend to, rewrite, normalize into, or otherwise
-transform `dest`.
+value.  `--dest-root` SHALL NOT prepend to, rewrite, relocate, normalize into, or
+otherwise transform `dest`.
 
 For example:
 
@@ -160,8 +212,13 @@ rather than:
 dest=tool.bash
 ```
 
+The selected destination root changes only whether a destination is permitted.
+It does not change the destination's meaning.
+
 This keeps the manifest self-describing and makes destination changes visible in
-source review.
+source review.  Two invocations that accept the same manifest record therefore
+do not materialize that record at different paths merely because their
+`--dest-root` options differ.
 
 `dest-root` SHALL NOT be a manifest field in version 1.  A dependency manifest
 therefore cannot weaken its own destination boundary.  Unknown manifest fields
@@ -224,9 +281,18 @@ The override is intentionally invocation policy rather than dependency data.
 
 ### Interpret `--dest-root` as a prefix to prepend to `dest`
 
-This resembles traditional installation `PREFIX` behavior but makes the
-manifest's visible destination incomplete.  Version 1 instead keeps `dest`
-project-relative and uses the option only as an allowed-root constraint.
+This resembles traditional installation `PREFIX` behavior and initially appeared
+attractive because changing the option would relocate the same manifest beneath a
+different tree.
+
+It was rejected because it makes the visible `dest=` incomplete.  For example,
+`dest=foo.bash` could become `vendor/foo.bash`, `assets/foo.bash`, or another path
+depending on invocation state.  A reviewer would have to inspect the caller as
+well as the manifest to determine the actual destination.
+
+Version 1 instead keeps `dest` project-relative and complete.  `--dest-root` is
+only an allowed-root constraint, so the manifest continues to say exactly where
+the artifact will be materialized.
 
 ### Require `realpath` containment checks
 
@@ -234,6 +300,13 @@ Canonical path checks can be useful, but missing destinations complicate
 portable use, `realpath` behavior differs across environments, and it would add a
 runtime dependency.  The selected-root rule is combined with strict lexical path
 validation and component-by-component symlink rejection instead.
+
+### Reject a harmless trailing slash on `--dest-root`
+
+Requiring `--dest-root vendor` while rejecting `--dest-root vendor/` would provide
+one textual canonical form at the CLI boundary, but directory arguments commonly
+appear with or without a trailing slash.  Normalizing trailing slashes before
+validation avoids a surprising failure without weakening containment.
 
 ## Consequences
 
@@ -248,6 +321,10 @@ change as review-worthy Make/CI configuration.
 
 The manifest remains self-describing because `dest` always contains the complete
 project-relative path.
+
+`--dest-root` does not provide relocation semantics.  Projects that need a true
+installation-prefix mechanism would require a separate, explicitly named feature
+and architectural decision.
 
 Existing consumers that intentionally materialize dependencies outside `vendor/`
 will need to pass `--dest-root` explicitly.
