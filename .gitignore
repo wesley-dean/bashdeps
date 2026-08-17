@@ -196,7 +196,7 @@ secring.*
 # KDE directory preferences
 .directory
 
-# Linux trash folder which might appear on any partition or disk
+# Linux trash folder which might appear on any partition
 .Trash-*
 
 # .nfs files are created when an open file is removed but is still being accessed
@@ -360,3 +360,7 @@ $RECYCLE.BIN/
 
 # SonarScanner
 .scannerwork
+
+# Doxygen reference output is generated but intentionally committable.
+!doc/reference/
+!doc/reference/**
