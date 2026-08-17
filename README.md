@@ -4,6 +4,7 @@
 [![MegaLinter](https://github.com/wesley-dean/bashdeps/actions/workflows/megalinter.yml/badge.svg)](https://github.com/wesley-dean/bashdeps/actions/workflows/megalinter.yml)
 [![Scorecard supply-chain security](https://github.com/wesley-dean/bashdeps/actions/workflows/scorecard.yml/badge.svg)](https://github.com/wesley-dean/bashdeps/actions/workflows/scorecard.yml)
 [![Tests](https://github.com/wesley-dean/bashdeps/actions/workflows/test.yml/badge.svg)](https://github.com/wesley-dean/bashdeps/actions/workflows/test.yml)
+[![Documentation](https://github.com/wesley-dean/bashdeps/actions/workflows/static.yml/badge.svg)](https://github.com/wesley-dean/bashdeps/actions/workflows/static.yml)
 
 `bashdeps` is a small Bash tool for downloading, verifying, and materializing
 exact external artifacts declared by a repository.  The distributed executable is
