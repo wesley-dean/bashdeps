@@ -304,12 +304,13 @@ __bashdeps_download() {
   candidate=$2
 
   __bashdeps_select_download_backend || return $?
-  for attempt in 1 2 3; do
+  for ((attempt = 1; attempt <= 3; attempt++)); do
     rm -f "$candidate" || return 6
     if __bashdeps_download_once "$url" "$candidate"; then
       return 0
+    else
+      status=$?
     fi
-    status=$?
     ((status == 3)) && return 3
   done
 
@@ -395,7 +396,7 @@ __bashdeps_make_stage() {
   local root candidate attempt
   root=$1
 
-  for attempt in 1 2 3 4 5; do
+  for ((attempt = 1; attempt <= 5; attempt++)); do
     candidate=$root/.bashdeps-stage.$$.$RANDOM
     if mkdir "$candidate" 2>/dev/null; then
       chmod 0700 "$candidate" 2>/dev/null || {
@@ -444,7 +445,7 @@ __bashdeps_publish_candidate() {
   __bashdeps_ensure_parent "$root" "$dest" || return $?
   __bashdeps_check_existing_path "$root" "$dest" || return $?
 
-  for attempt in 1 2 3 4 5; do
+  for ((attempt = 1; attempt <= 5; attempt++)); do
     tmp=$final.bashdeps-tmp.$$.$RANDOM
     [[ ! -e $tmp && ! -L $tmp ]] && break
     tmp=''
