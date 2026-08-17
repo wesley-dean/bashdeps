@@ -1,7 +1,8 @@
 # bashdeps
 
 `bashdeps` is a small Bash tool for downloading, verifying, and materializing
-exact external artifacts declared by a repository.
+exact external artifacts declared by a repository.  The distributed executable is
+named `bashdeps.bash`.
 
 It is designed for projects that need a few pinned files without adopting a
 package manager or repeating download and checksum logic in every Makefile.
@@ -142,7 +143,7 @@ Projects with a legitimate alternate dependency tree may select one explicitly
 for the invocation:
 
 ```bash
-bashdeps sync --dest-root assets dependencies.txt
+bashdeps.bash sync --dest-root assets dependencies.txt
 ```
 
 A corresponding manifest still declares the complete destination:
@@ -191,7 +192,7 @@ live upstream checksum during synchronization.
 ### Install one artifact
 
 ```bash
-bashdeps install \
+bashdeps.bash install \
   id=wesley-dean/mktext@0.0.7 \
   url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash \
   dest=vendor/mktext.bash \
@@ -201,7 +202,7 @@ bashdeps install \
 For an alternate destination root:
 
 ```bash
-bashdeps install --dest-root assets \
+bashdeps.bash install --dest-root assets \
   id=example@1 \
   url=https://example.test/item.dat \
   dest=assets/item.dat \
@@ -213,7 +214,7 @@ When an interactive shell would interpret characters inside a value, quote that
 argument normally.  For example:
 
 ```bash
-bashdeps install \
+bashdeps.bash install \
   id=example@1 \
   'url=https://example.test/file?first=1&second=2' \
   dest=vendor/example.dat \
@@ -226,7 +227,7 @@ downloading or replacing it.
 ### Synchronize a manifest
 
 ```bash
-bashdeps sync
+bashdeps.bash sync
 ```
 
 This uses `dependencies.txt` and the default destination root `vendor`.
@@ -234,13 +235,13 @@ This uses `dependencies.txt` and the default destination root `vendor`.
 An alternate manifest can be supplied explicitly:
 
 ```bash
-bashdeps sync path/to/dependencies.txt
+bashdeps.bash sync path/to/dependencies.txt
 ```
 
 An alternate destination root is explicit invocation policy:
 
 ```bash
-bashdeps sync --dest-root assets path/to/dependencies.txt
+bashdeps.bash sync --dest-root assets path/to/dependencies.txt
 ```
 
 `sync` validates the complete manifest, identifies missing or mismatched
@@ -255,14 +256,14 @@ Bashdeps does not prune undeclared files.
 ### Verify existing state
 
 ```bash
-bashdeps verify
+bashdeps.bash verify
 ```
 
 or:
 
 ```bash
-bashdeps verify path/to/dependencies.txt
-bashdeps verify --dest-root assets path/to/dependencies.txt
+bashdeps.bash verify path/to/dependencies.txt
+bashdeps.bash verify --dest-root assets path/to/dependencies.txt
 ```
 
 `verify` performs no network access and no intentional filesystem mutation.  It
@@ -332,8 +333,8 @@ The consuming Makefile independently pins and verifies that artifact.
 The recommended target boundary is:
 
 ```text
-make deps        bootstrap bashdeps if needed, then bashdeps sync
-make deps-check  bashdeps verify using an already-present bootstrap artifact
+make deps        bootstrap bashdeps.bash if needed, then bashdeps.bash sync
+make deps-check  bashdeps.bash verify using an already-present bootstrap artifact
 make build       build only from current local inputs
 make all         deps, then build
 ```
@@ -342,7 +343,7 @@ A project using a non-default dependency tree should make that policy visible in
 its Makefile, for example:
 
 ```text
-bashdeps sync --dest-root third_party dependencies.txt
+bashdeps.bash sync --dest-root third_party dependencies.txt
 ```
 
 `deps-check` should fail rather than silently download a missing bashdeps
@@ -360,8 +361,9 @@ src/bashdeps.bash
 
 ```text
 dist/bashdeps.dev.bash
+dist/bashdeps.dev.bash.256
 dist/bashdeps.bash
-dist/SHA256SUMS
+dist/bashdeps.bash.256
 ```
 
 `bashdeps.dev.bash` retains source comments.
@@ -369,7 +371,18 @@ dist/SHA256SUMS
 `bashdeps.bash` is the normal consumer artifact and removes full-line source
 comments while preserving executable behavior.
 
-This project does not generate a minified artifact.
+Each Bash artifact has one checksum companion whose filename is the artifact name
+plus `.256`.  The checksum file uses conventional checksum-tool syntax, so from
+`dist/` the normal artifact can be verified with:
+
+```bash
+sha256sum -c bashdeps.bash.256
+```
+
+or the supported `shasum` equivalent.
+
+This project does not generate an aggregate `SHA256SUMS` file and does not
+generate a minified artifact.
 
 The same public behavior suite is run against maintained source and both generated
 Bash artifacts.
@@ -405,7 +418,7 @@ AI-assisted contributors should review `AGENTS.md` before substantive changes.
 
 ## Public Interface
 
-The supported public interface is the executable CLI.
+The supported public interface is the `bashdeps.bash` executable CLI.
 
 Bashdeps does not provide a supported sourceable library API in version 1.
 Private `__bashdeps_*` functions are implementation details.
