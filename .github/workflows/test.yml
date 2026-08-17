@@ -1,0 +1,48 @@
+---
+# yamllint disable-line rule:truthy
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+name: Tests
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.ref }}-${{ github.workflow }}"
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pin@v4
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bats shellcheck shfmt
+
+      - name: Run project validation
+        run: make check test
+
+  bash-4-3:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pin@v4
+
+      - name: Build compatibility artifacts
+        run: make build VERSION=0.0.0-ci
+
+      - name: Verify Bash 4.3 compatibility
+        run: |
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}:/work:ro" \
+            --workdir /work \
+            bash:4.3 \
+            bash -c 'BASHDEPS_EXECUTABLE=src/bashdeps.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.dev.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.bash bash tests/compat-bash.bash'
