@@ -70,17 +70,17 @@ Each dependency is one logical record using named fields.  The compact one-line
 form remains valid:
 
 ```text
-id=wesley-dean/mktext@0.0.7 url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash dest=vendor/mktext.bash digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
+id=wesley-dean/mktext@0.0.9 url=https://github.com/wesley-dean/mktext/releases/download/v0.0.9/mktext.bash dest=vendor/mktext.bash digest=sha256:b25cc84f733ccb8368f6cba98578ea7e266638cb61e794fc0028f16266cd336a
 ```
 
 For readability, the same logical record may use explicit trailing continuation
 markers:
 
 ```text
-id=wesley-dean/mktext@0.0.7 \
-  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash \
+id=wesley-dean/mktext@0.0.9 \
+  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.9/mktext.bash \
   dest=vendor/mktext.bash \
-  digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
+  digest=sha256:b25cc84f733ccb8368f6cba98578ea7e266638cb61e794fc0028f16266cd336a
 ```
 
 Those two forms mean exactly the same thing.
@@ -229,10 +229,10 @@ live upstream checksum during synchronization.
 
 ```bash
 bashdeps.bash install \
-  id=wesley-dean/mktext@0.0.7 \
-  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash \
+  id=wesley-dean/mktext@0.0.9 \
+  url=https://github.com/wesley-dean/mktext/releases/download/v0.0.9/mktext.bash \
   dest=vendor/mktext.bash \
-  digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
+  digest=sha256:b25cc84f733ccb8368f6cba98578ea7e266638cb61e794fc0028f16266cd336a
 ```
 
 For an alternate destination root:
@@ -335,9 +335,9 @@ The public exit status contract is:
 A malformed or unterminated continuation is status 2, including a blank/comment
 line where a trailing `\` requires immediate continued record content.
 
-An invalid `--dest-root` value or a destination outside the selected root is
-status 2 because it is invalid invocation/declaration policy rather than a
-publication failure.
+An invalid `--dest-root` value or a destination outside the selected root is status
+2 because it is invalid invocation/declaration policy rather than a publication
+failure.
 
 Diagnostics are written to standard error.  Successful `install`, `sync`, and
 `verify` operations normally produce no standard output.
@@ -361,9 +361,9 @@ Manifest contents are never sourced or evaluated as shell code.
 
 ## Consumer Make Integration
 
-A project needs a small bootstrap path for bashdeps itself.  That bootstrap
-belongs in the consuming Makefile, outside `dependencies.txt`, because bashdeps
-cannot use its own manifest until the executable already exists.
+A project needs a small bootstrap path for bashdeps itself.  That bootstrap belongs
+in the consuming Makefile, outside `dependencies.txt`, because bashdeps cannot use
+its own manifest until the executable already exists.
 
 A typical layout is:
 
@@ -378,8 +378,15 @@ Makefile
 
 The consuming Makefile pins the bashdeps release URL and SHA-256 digest, verifies
 candidate bytes before publishing `vendor/bashdeps.bash`, and verifies the cached
-bootstrap artifact again before using it.  The manifest then owns ordinary
-project dependencies such as `mktext` and the Doxygen filter.
+bootstrap artifact again before using it.  The manifest then owns ordinary project
+dependencies such as `mktext` and the Doxygen filter.
+
+The bootstrap must remain outside the destination paths managed by
+`dependencies.txt`; it does not necessarily need to live outside the broader
+`vendor/` directory.  ADR-008 recommends `.build/bashdeps.bash` when a consumer
+wants structural separation or gives bashdeps exclusive ownership of a dependency
+tree.  `vendor/bashdeps.bash` is also valid when it is absent from the manifest and
+the consumer does not ask bashdeps to prune undeclared files.
 
 The following excerpt shows the relevant boundary.  Replace the placeholder
 version and digest with the exact bashdeps release selected by the consuming
@@ -413,11 +420,10 @@ deps-check: verify-bashdeps
 	"$(BASHDEPS)" verify dependencies.txt
 ```
 
-`deps` may bootstrap `vendor/bashdeps.bash` when it is absent, but it still
-verifies that bootstrap artifact before allowing it to interpret
-`dependencies.txt`.  `deps-check` deliberately has no dependency on
-`$(BASHDEPS)`, so a missing bootstrap executable causes the check to fail rather
-than reaching the network.
+`deps` may bootstrap `vendor/bashdeps.bash` when it is absent, but it still verifies
+that bootstrap artifact before allowing it to interpret `dependencies.txt`.
+`deps-check` deliberately has no dependency on `$(BASHDEPS)`, so a missing
+bootstrap executable causes the check to fail rather than reaching the network.
 
 The recommended target boundary is therefore:
 
@@ -434,6 +440,11 @@ its Makefile, for example:
 ```text
 vendor/bashdeps.bash sync --dest-root third_party dependencies.txt
 ```
+
+The bashdeps repository itself dogfoods this contract.  Its Makefile directly
+bootstraps one released `vendor/bashdeps.bash`, while the committed
+`dependencies.txt` declares mktext and the Bash Doxygen filter.  See ADR-017 for
+the repository-specific trust and ownership rationale.
 
 ## Build and Release Artifacts
 
@@ -467,8 +478,8 @@ sha256sum -c bashdeps.bash.256
 
 or the supported `shasum` equivalent.
 
-This project does not generate an aggregate `SHA256SUMS` file and does not
-generate a minified artifact.
+This project does not generate an aggregate `SHA256SUMS` file and does not generate
+a minified artifact.
 
 The same public behavior suite is run against maintained source and both generated
 Bash artifacts.
@@ -483,6 +494,8 @@ Common targets are:
 
 ```bash
 make all
+make deps
+make deps-check
 make build
 make check
 make format
@@ -507,14 +520,21 @@ Doxygen reference documentation is generated from `src/bashdeps.bash` with:
 make docs
 ```
 
-Local documentation generation requires Doxygen.  The Make target downloads the
-`bash-doxygen` AWK filter into `vendor/doxygen-bash.awk` on first use and then
-writes the generated site under `doc/reference/`.
+Local documentation generation requires Doxygen.  `make docs` first uses the same
+`make deps` path documented for consumers: Make bootstraps and verifies the pinned
+released `vendor/bashdeps.bash`, then bashdeps synchronizes `dependencies.txt`.
+That manifest materializes `vendor/doxygen-bash.awk` and the repository's mktext
+integration dependency.
 
-Both the downloaded filter and generated reference directory are ignored by Git.
-Use `make docs-clean` to remove only generated reference documentation or
-`make distclean` to remove normal build output, reference documentation, and the
-downloaded filter.
+Newly materialized bashdeps artifacts use mode `0644`, so the Make target explicitly
+makes `vendor/doxygen-bash.awk` executable immediately before Doxygen invokes it as
+a filter.  Executability remains consumer policy rather than manifest semantics.
+The generated site is written under `doc/reference/`.
+
+The bootstrap executable, manifest-managed artifacts, and generated reference
+directory are ignored by Git.  Use `make docs-clean` to remove only generated
+reference documentation or `make distclean` to remove ordinary build output,
+reference documentation, and the complete generated `vendor/` tree.
 
 Generated Doxygen output is not committed to this repository.  On pushes to
 `main`, `.github/workflows/static.yml` installs Doxygen, runs the same `make docs`
@@ -524,7 +544,8 @@ target, and publishes `doc/reference/` to GitHub Pages at:
 https://wesley-dean.github.io/bashdeps/
 ```
 
-See ADR-016 for the generation and publication decision.
+See ADR-016 for the generation/publication decision and ADR-017 for the
+manifest-mediated tooling acquisition decision.
 
 ## Architecture
 
