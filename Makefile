@@ -13,22 +13,33 @@ DIST_CHECKSUM := $(DIST_ARTIFACT).256
 LEGACY_CHECKSUMS := $(DIST_DIR)/SHA256SUMS
 
 TESTS_DIR := tests
-TEST_SCRIPTS := $(TESTS_DIR)/*.bats
+TEST_SCRIPTS := $(TESTS_DIR)/bashdeps.bats $(TESTS_DIR)/wget-capability.bats
+BUILD_DEPS_TEST := $(TESTS_DIR)/build-deps.bats
 TEST_HELPERS := $(TESTS_DIR)/test_helper.bash
 COMPAT_TEST := $(TESTS_DIR)/compat-bash.bash
 
 VENDOR_DIR := vendor
+DEPENDENCY_MANIFEST := dependencies.txt
+BASHDEPS := $(VENDOR_DIR)/bashdeps.bash
+BASHDEPS_VERSION := 0.0.6
+BASHDEPS_URL := https://github.com/wesley-dean/bashdeps/releases/download/v$(BASHDEPS_VERSION)/bashdeps.bash
+BASHDEPS_SHA256 := bb6c807fa12c010950bda06172ac0611d278c57aca1f8352f41502d0d76b4e6c
 DOXYGEN_BASH_FILTER := $(VENDOR_DIR)/doxygen-bash.awk
-DOXYGEN_BASH_FILTER_URL := https://raw.githubusercontent.com/wesley-dean/bash-doxygen/refs/heads/main/doxygen-bash.awk
 REFERENCE_DOC_DIR := doc/reference
 
 VERSION ?= 0.0.0-dev
 BUILD_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')
 BUILD_DATE ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || printf 'unknown')
 
-.PHONY: all build check clean distclean docs docs-clean format test test-source test-dev test-dist
+.PHONY: all build check clean deps deps-check distclean docs docs-clean FORCE format test test-build-deps test-source test-dev test-dist verify-bashdeps
 
-all: build
+## Synchronize development dependencies, then build release artifacts.
+##
+## The recursive Make invocation keeps ordering explicit under parallel Make.
+## Plain `make build` remains independent of dependency synchronization and does
+## not create or verify vendor state.
+all: deps
+	$(MAKE) --no-print-directory build
 
 build: $(SOURCE)
 	mkdir -p "$(DIST_DIR)"
@@ -76,6 +87,75 @@ build: $(SOURCE)
 	mv "$(DEV_CHECKSUM).tmp" "$(DEV_CHECKSUM)"
 	mv "$(DIST_CHECKSUM).tmp" "$(DIST_CHECKSUM)"
 
+## Force the bootstrap file target to validate cached bytes whenever requested.
+FORCE:
+
+## Bootstrap the pinned released bashdeps executable used to process dependencies.txt.
+##
+## Make directly owns only this bootstrap dependency. Correct cached bytes avoid
+## network access. Missing or mismatched bytes are replaced only after a staged
+## download matches the committed SHA-256 digest.
+$(BASHDEPS): FORCE
+	@mkdir -p "$(VENDOR_DIR)"
+	@verify_hash() { \
+		path=$$1; \
+		if command -v sha256sum >/dev/null 2>&1; then \
+			printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$$path" | sha256sum -c - >/dev/null 2>&1; \
+		elif command -v shasum >/dev/null 2>&1; then \
+			actual="$$(shasum -a 256 "$$path" | awk '{print $$1}')"; \
+			[[ "$$actual" == "$(BASHDEPS_SHA256)" ]]; \
+		else \
+			return 2; \
+		fi; \
+	}; \
+	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then \
+		printf '%s\n' 'No SHA-256 verification command is available for bashdeps.bash' >&2; \
+		exit 1; \
+	fi; \
+	if [[ -f "$@" ]] && verify_hash "$@"; then \
+		chmod 0755 "$@"; \
+		exit 0; \
+	fi; \
+	if ! command -v curl >/dev/null 2>&1; then \
+		printf '%s\n' 'curl is required to bootstrap bashdeps.bash' >&2; \
+		exit 1; \
+	fi; \
+	tmp="$@.tmp"; \
+	trap 'rm -f "$$tmp"' EXIT; \
+	curl -fsSL "$(BASHDEPS_URL)" -o "$$tmp"; \
+	if ! verify_hash "$$tmp"; then \
+		printf '%s\n' 'Downloaded bashdeps.bash does not match the committed SHA-256 digest' >&2; \
+		exit 1; \
+	fi; \
+	chmod 0755 "$$tmp"; \
+	mv "$$tmp" "$@"; \
+	trap - EXIT
+
+## Verify the already-present bashdeps bootstrap without network access or repair.
+verify-bashdeps:
+	@test -x "$(BASHDEPS)" || { \
+		printf '%s\n' 'Missing or non-executable bashdeps bootstrap; run make deps' >&2; \
+		exit 1; \
+	}
+	@if command -v sha256sum >/dev/null 2>&1; then \
+		printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$(BASHDEPS)" | sha256sum -c - >/dev/null; \
+	elif command -v shasum >/dev/null 2>&1; then \
+		actual="$$(shasum -a 256 "$(BASHDEPS)" | awk '{print $$1}')"; \
+		[[ "$$actual" == "$(BASHDEPS_SHA256)" ]]; \
+	else \
+		printf '%s\n' 'No SHA-256 verification command is available for bashdeps.bash' >&2; \
+		exit 1; \
+	fi
+
+## Synchronize manifest-managed development dependencies through released bashdeps.
+deps: $(BASHDEPS) $(DEPENDENCY_MANIFEST)
+	$(MAKE) --no-print-directory verify-bashdeps
+	"$(BASHDEPS)" sync "$(DEPENDENCY_MANIFEST)"
+
+## Verify bootstrap and manifest-managed state without network access or repair.
+deps-check: verify-bashdeps $(DEPENDENCY_MANIFEST)
+	"$(BASHDEPS)" verify "$(DEPENDENCY_MANIFEST)"
+
 check:
 	bash -n "$(SOURCE)" $(TEST_HELPERS) "$(COMPAT_TEST)"
 	shellcheck "$(SOURCE)"
@@ -83,7 +163,7 @@ check:
 format:
 	shfmt -w -i 2 -ci "$(SOURCE)" $(TEST_HELPERS) "$(COMPAT_TEST)"
 
-test: test-source test-dev test-dist
+test: test-source test-dev test-dist test-build-deps
 
 test-source:
 	BASHDEPS_EXECUTABLE="$(SOURCE)" bats $(TEST_SCRIPTS)
@@ -106,34 +186,26 @@ test-dist: build
 	cd "$(DIST_DIR)" && if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "$(notdir $(DIST_CHECKSUM))"; else shasum -a 256 -c "$(notdir $(DIST_CHECKSUM))"; fi
 	test ! -e "$(LEGACY_CHECKSUMS)"
 
-##
-# Download the Bash Doxygen filter used to preprocess maintained shell source.
-#
-$(DOXYGEN_BASH_FILTER):
-	mkdir -p "$(VENDOR_DIR)"
-	curl -fsSL "$(DOXYGEN_BASH_FILTER_URL)" -o "$@.tmp"
-	chmod 0755 "$@.tmp"
-	mv "$@.tmp" "$@"
+## Exercise Make/bootstrap/dependency boundaries once per test run.
+test-build-deps:
+	bats "$(BUILD_DEPS_TEST)"
 
-##
-# Remove generated Doxygen reference documentation.
-#
+## Remove generated Doxygen reference documentation.
 docs-clean:
 	rm -rf "$(REFERENCE_DOC_DIR)"
 
+## Generate browsable Doxygen reference documentation from maintained Bash source.
 ##
-# Generate browsable Doxygen reference documentation from maintained Bash source.
-#
-docs: docs-clean $(DOXYGEN_BASH_FILTER)
+## The filter is manifest-managed data. The documentation consumer applies the
+## executable mode Doxygen needs rather than asking bashdeps to infer file purpose.
+docs: docs-clean deps
+	chmod 0755 "$(DOXYGEN_BASH_FILTER)"
 	mkdir -p "$(REFERENCE_DOC_DIR)"
 	doxygen Doxyfile
 
 clean:
 	rm -rf "$(DIST_DIR)"
 
-##
-# Remove ordinary build output, generated reference docs, and downloaded docs tooling.
-#
+## Remove ordinary build output, generated reference docs, and generated vendor state.
 distclean: clean docs-clean
-	$(RM) -f "$(DOXYGEN_BASH_FILTER)"
-	-rmdir "$(VENDOR_DIR)" >/dev/null 2>&1
+	rm -rf "$(VENDOR_DIR)"

@@ -42,8 +42,11 @@ jobs:
           initial_version: 0.0.1
           tag_prefix: v
 
-      - name: Build release artifacts
-        run: make build VERSION="${{ steps.calculate-version.outputs.version-string }}"
+      - name: Build release artifacts without development dependency state
+        run: |
+          test ! -e vendor
+          make build VERSION="${{ steps.calculate-version.outputs.version-string }}"
+          test ! -e vendor
 
       - name: Validate release artifacts
         run: make test-dev test-dist VERSION="${{ steps.calculate-version.outputs.version-string }}"

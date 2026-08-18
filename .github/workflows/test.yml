@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - "agent/**"
   pull_request:
   workflow_dispatch:
 
@@ -25,7 +26,20 @@ jobs:
       - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes bats shellcheck shfmt
+          sudo apt-get install --yes bats curl shellcheck shfmt
+
+      - name: Verify build does not acquire dependencies
+        run: |
+          make build VERSION=0.0.0-ci
+          test -x dist/bashdeps.bash
+          test ! -e vendor
+          make clean
+
+      - name: Synchronize project dependencies
+        run: make deps
+
+      - name: Verify synchronized dependency state
+        run: make deps-check
 
       - name: Run project validation
         run: make check test
@@ -36,8 +50,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pin@v4
 
-      - name: Build compatibility artifacts
-        run: make build VERSION=0.0.0-ci
+      - name: Install dependency bootstrap requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes curl
+
+      - name: Build compatibility artifacts from fresh dependency state
+        run: make all VERSION=0.0.0-ci
 
       - name: Verify Bash 4.3 compatibility
         run: |
@@ -46,3 +65,26 @@ jobs:
             --workdir /work \
             bash:4.3 \
             bash -c 'BASHDEPS_EXECUTABLE=src/bashdeps.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.dev.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.bash bash tests/compat-bash.bash'
+
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pin@v4
+
+      - name: Install documentation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes curl doxygen
+
+      - name: Generate reference documentation
+        run: make docs
+
+      - name: Verify dependency state after documentation generation
+        run: make deps-check
+
+      - name: Verify reference documentation output
+        run: |
+          test -f doc/reference/index.html
+          git check-ignore -q doc/reference/index.html
+          test -z "$(git status --porcelain --untracked-files=all -- doc/reference)"
