@@ -326,7 +326,7 @@ The public exit status contract is:
 0  success, help, or version output
 1  verify completed but one or more destinations are absent or mismatched
 2  invalid CLI usage, invalid manifest, or invalid declaration
-3  required runtime capability is unavailable/unusable
+3  required runtime capability is unavailable or unusable
 4  network acquisition failed
 5  acquired candidate bytes do not match the approved digest
 6  filesystem safety, staging, or publication failed
