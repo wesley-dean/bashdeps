@@ -30,6 +30,22 @@ jobs:
       - name: Run project validation
         run: make check test
 
+  dependency-integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pin@v4
+
+      - name: Synchronize project dependencies
+        run: make deps
+
+      - name: Verify synchronized dependency state
+        run: |
+          test -x vendor/bashdeps.bash
+          test -f vendor/mktext.bash
+          test -f vendor/doxygen-bash.awk
+          vendor/bashdeps.bash verify dependencies.txt
+
   bash-4-3:
     runs-on: ubuntu-24.04
     steps:
