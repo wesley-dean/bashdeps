@@ -39,7 +39,8 @@ The ADR collection is the canonical source of architectural intent.
 
 Before making significant changes, review the relevant files under `doc/adr/`.
 Also review `doc/bashdeps-spec.md` whenever a change can affect observable public
-behavior.  Source-code documentation work SHALL follow ADR-014.
+behavior.  Source-code documentation work SHALL follow ADR-014.  Repository
+self-hosting and development-dependency work SHALL follow ADR-017.
 
 Preserve these foundational boundaries:
 
@@ -57,7 +58,17 @@ Preserve these foundational boundaries:
 - symbolic-link path traversal is rejected;
 - bashdeps does not own or prune an entire `vendor/` tree;
 - ordinary artifact purpose and executability are not inferred;
-- the public API is the `bashdeps.bash` CLI, not private Bash helpers.
+- the public API is the `bashdeps.bash` CLI, not private Bash helpers;
+- the source repository directly bootstraps only a pinned released
+  `vendor/bashdeps.bash` development tool;
+- that bootstrap is excluded from `dependencies.txt` and independently verified
+  before execution;
+- ordinary external development artifacts are declared in `dependencies.txt`;
+- the current manifest contains only the documentation-only Bash Doxygen filter;
+- `make build` does not acquire, verify, or require development dependency state;
+- `make deps-check` is network-free and non-repairing; and
+- released bashdeps artifacts do not require `vendor/` or `dependencies.txt` at
+  runtime.
 
 ## Clarify Before Acting
 
@@ -115,7 +126,60 @@ Development:
 - Bats
 - ShellCheck
 - shfmt
+- Doxygen for reference generation
 - GitHub Actions
+
+## Development Dependency Management
+
+ADR-017 defines the source repository's deliberate self-hosting boundary.
+
+Make directly owns only:
+
+```text
+vendor/bashdeps.bash
+```
+
+That file is a previously released bashdeps artifact pinned by exact version,
+immutable release URL, and committed SHA-256 digest.  Existing bytes may be reused
+only when they match the committed digest.  Missing or mismatched bytes are
+replaced only after a staged candidate verifies successfully.
+
+Do not put `vendor/bashdeps.bash` in `dependencies.txt`; the bootstrap executable
+must exist before the manifest can be processed.
+
+The committed `dependencies.txt` file owns ordinary external development
+artifacts.  At present it declares only:
+
+```text
+vendor/doxygen-bash.awk
+```
+
+using the immutable bash-doxygen v0.0.6 tag and committed digest.  The selected
+released bootstrap predates ADR-015 manifest folding, so keep repository manifest
+records on one physical line until the bootstrap pin intentionally moves to a
+compatible release.
+
+Target boundaries are explicit:
+
+```text
+make deps        bootstrap/verify released bashdeps, then sync dependencies.txt
+make deps-check  verify existing bootstrap and manifest state without repair
+make build       build only from maintained source; do not touch vendor state
+make all         deps, then build
+make docs        prepare deps, then generate reference documentation
+```
+
+`make deps` and therefore `make all`/`make docs` may use the network.  `make
+deps-check` must not use the network.  `make build` must not invoke dependency
+preparation and currently succeeds from a clean checkout because the manifest
+contains documentation tooling only.
+
+The complete `vendor/` tree is generated state.  `make distclean` removes it.
+
+The Doxygen filter is published by bashdeps as ordinary mode `0644` data.  The
+`docs` consumer target applies executable mode before Doxygen uses it.  Do not add
+mode inference to bashdeps merely to satisfy this repository's documentation
+consumer.
 
 ## Coding Guidelines
 
@@ -174,6 +238,15 @@ conventional checksum-tool syntax.  The project does not generate an aggregate
 `SHA256SUMS` file.
 
 Tests must cover maintained source and both generated Bash artifacts.
+
+`make build` has no external manifest-managed input in the current architecture.
+It must not bootstrap bashdeps, synchronize `dependencies.txt`, verify development
+state, or create `vendor/`.
+
+The versioning/release workflow likewise builds consumer artifacts without the
+documentation-only dependency tree and asserts that release generation does not
+create `vendor/`.  Do not couple release availability to the Doxygen filter unless
+a future release artifact genuinely consumes it.
 
 ## Scope Discipline
 
@@ -254,6 +327,12 @@ Run the same public behavior suite against:
 Generated artifacts are products and must not be assumed correct because source
 tests passed.
 
+Repository orchestration tests run separately from the three public-artifact
+behavior passes.  They should exercise Make/bootstrap/dependency boundaries with
+controlled fake bootstrap/download inputs so ordinary tests remain deterministic.
+CI may additionally exercise the real pinned released bootstrap and immutable
+manifest URL.
+
 Every functional change should prompt these questions:
 
 - What public behavior changed?
@@ -273,12 +352,20 @@ When practical:
 - review the resulting diff;
 - run Bash syntax validation on maintained source and executable test helpers;
 - run Bats tests against source and both generated artifacts;
+- run the Make/bootstrap dependency-boundary regression tests;
 - run ShellCheck on `src/bashdeps.bash` only; do not run ShellCheck on tests;
 - run shfmt checks on maintained source and executable test helpers;
+- verify a clean `make build` does not create `vendor/`;
+- synchronize real development dependencies with `make deps` when integration
+  validation is appropriate;
+- verify synchronized state offline with `make deps-check`;
+- verify `make all` sequences dependency preparation before build;
+- verify `make docs` uses the manifest-managed Doxygen filter;
 - verify generated artifact metadata;
 - verify `dist/bashdeps.dev.bash.256` and `dist/bashdeps.bash.256` against the final
   generated bytes;
 - confirm `verify` tests do not accidentally reach the network;
+- confirm generated release artifacts run without the vendor tree or manifest;
 - confirm generated comment removal does not alter observable behavior;
 - for documentation-only Bash changes, confirm non-comment lines are unchanged.
 
@@ -308,7 +395,14 @@ Avoid:
 - inventing source-code rationale instead of marking genuine ambiguity with `@TODO`;
 - introducing minification into this project;
 - claiming multi-file transactionality or concurrency guarantees version 1 does
-  not provide.
+  not provide;
+- putting `vendor/bashdeps.bash` in the manifest it is required to process;
+- using unreleased `src/bashdeps.bash` as the repository bootstrap tool;
+- reintroducing direct Make acquisition for manifest-managed development artifacts;
+- using moving `main`/`master` URLs when an immutable release or tag is available;
+- making `make build` implicitly synchronize or verify development dependencies;
+- making `make deps-check` bootstrap, download, or repair state; or
+- coupling release artifact generation to documentation-only dependency state.
 
 ## Final Principle
 
