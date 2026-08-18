@@ -361,21 +361,69 @@ Manifest contents are never sourced or evaluated as shell code.
 
 ## Consumer Make Integration
 
-A project still needs a small bootstrap path for bashdeps itself.  The recommended
-pattern keeps the pinned bashdeps artifact outside `dependencies.txt`, for
-example:
+A project needs a small bootstrap path for bashdeps itself.  That bootstrap
+belongs in the consuming Makefile, outside `dependencies.txt`, because bashdeps
+cannot use its own manifest until the executable already exists.
+
+A typical layout is:
 
 ```text
-.build/bashdeps.bash
+Makefile
+  -> directly bootstrap and verify vendor/bashdeps.bash
+  -> make deps
+       -> vendor/bashdeps.bash sync dependencies.txt
+            -> vendor/mktext.bash
+            -> vendor/doxygen-bash.awk
 ```
 
-The consuming Makefile independently pins and verifies that artifact.
+The consuming Makefile pins the bashdeps release URL and SHA-256 digest, verifies
+candidate bytes before publishing `vendor/bashdeps.bash`, and verifies the cached
+bootstrap artifact again before using it.  The manifest then owns ordinary
+project dependencies such as `mktext` and the Doxygen filter.
 
-The recommended target boundary is:
+The following excerpt shows the relevant boundary.  Replace the placeholder
+version and digest with the exact bashdeps release selected by the consuming
+repository.  This example uses `sha256sum`; a consumer that standardizes on
+`shasum -a 256` can use the equivalent verification command.
+
+```make
+BASHDEPS_VERSION := <version>
+BASHDEPS := vendor/bashdeps.bash
+BASHDEPS_URL := https://github.com/wesley-dean/bashdeps/releases/download/v$(BASHDEPS_VERSION)/bashdeps.bash
+BASHDEPS_SHA256 := <64-lowercase-hex-digest>
+
+.PHONY: deps deps-check verify-bashdeps
+
+$(BASHDEPS):
+	mkdir -p "$(dir $@)"
+	curl -fsSL "$(BASHDEPS_URL)" -o "$@.tmp"
+	printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$@.tmp" | sha256sum -c -
+	chmod 0755 "$@.tmp"
+	mv "$@.tmp" "$@"
+
+verify-bashdeps:
+	test -x "$(BASHDEPS)"
+	printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$(BASHDEPS)" | sha256sum -c -
+
+deps: $(BASHDEPS)
+	$(MAKE) --no-print-directory verify-bashdeps
+	"$(BASHDEPS)" sync dependencies.txt
+
+deps-check: verify-bashdeps
+	"$(BASHDEPS)" verify dependencies.txt
+```
+
+`deps` may bootstrap `vendor/bashdeps.bash` when it is absent, but it still
+verifies that bootstrap artifact before allowing it to interpret
+`dependencies.txt`.  `deps-check` deliberately has no dependency on
+`$(BASHDEPS)`, so a missing bootstrap executable causes the check to fail rather
+than reaching the network.
+
+The recommended target boundary is therefore:
 
 ```text
-make deps        bootstrap bashdeps.bash if needed, then bashdeps.bash sync
-make deps-check  bashdeps.bash verify using an already-present bootstrap artifact
+make deps        bootstrap/verify bashdeps if needed, then sync dependencies.txt
+make deps-check  verify existing bashdeps, then verify dependencies.txt offline
 make build       build only from current local inputs
 make all         deps, then build
 ```
@@ -384,11 +432,8 @@ A project using a non-default dependency tree should make that policy visible in
 its Makefile, for example:
 
 ```text
-bashdeps.bash sync --dest-root third_party dependencies.txt
+vendor/bashdeps.bash sync --dest-root third_party dependencies.txt
 ```
-
-`deps-check` should fail rather than silently download a missing bashdeps
-bootstrap artifact, preserving its network-free meaning.
 
 ## Build and Release Artifacts
 
