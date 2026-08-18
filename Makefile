@@ -197,7 +197,7 @@ test-min: build
 	BASHDEPS_EXECUTABLE="$(MIN_ARTIFACT)" bats $(TEST_SCRIPTS)
 	BASHDEPS_EXECUTABLE="$$(pwd)/$(MIN_ARTIFACT)" bash "$(COMPAT_TEST)"
 	cd "$(DIST_DIR)" && if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "$(notdir $(MIN_CHECKSUM))"; else shasum -a 256 -c "$(notdir $(MIN_CHECKSUM))"; fi
-	 test ! -e "$(LEGACY_CHECKSUMS)"
+	test ! -e "$(LEGACY_CHECKSUMS)"
 
 ## Exercise Make/bootstrap/dependency boundaries once per test run.
 test-build-deps:
