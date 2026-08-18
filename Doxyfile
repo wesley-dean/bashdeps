@@ -1,7 +1,8 @@
 # Doxyfile
 #
 # Doxygen configuration for the bashdeps Bash source.  The Makefile docs target
-# downloads the Bash preprocessor filter before invoking this configuration.
+# prepares the manifest-managed Bash preprocessor filter before invoking this
+# configuration.
 
 PROJECT_NAME           = "bashdeps"
 PROJECT_BRIEF          = "Exact SHA-256-pinned Bash dependency materialization tool"
