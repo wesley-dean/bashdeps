@@ -24,7 +24,6 @@ BASHDEPS_VERSION := 0.0.5
 BASHDEPS_URL := https://github.com/wesley-dean/bashdeps/releases/download/v$(BASHDEPS_VERSION)/bashdeps.bash
 BASHDEPS_SHA256 := 697ae6a65c016faa219ba60e38b255f2de3a27c337abbe4675e8246661cfcc94
 DOXYGEN_BASH_FILTER := $(VENDOR_DIR)/doxygen-bash.awk
-MKTEXT_LIBRARY := $(VENDOR_DIR)/mktext.bash
 REFERENCE_DOC_DIR := doc/reference
 
 VERSION ?= 0.0.0-dev
