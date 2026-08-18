@@ -8,7 +8,13 @@ setup() {
   cp "$REPO_ROOT/src/bashdeps.bash" "$WORK/src/bashdeps.bash"
   cp "$REPO_ROOT/dependencies.txt" "$WORK/dependencies.txt"
 
-  printf '%s\n' 'managed documentation filter bytes' >"$WORK/managed-source"
+  printf '%s\n' 'managed documentation filter bytes' >"$WORK/managed-filter-source"
+
+  cat >"$WORK/managed-minifier-source" <<'FAKE'
+#!/usr/bin/env bash
+set -eu
+cat
+FAKE
 
   cat >"$WORK/fake-bashdeps" <<'FAKE'
 #!/usr/bin/env bash
@@ -16,24 +22,42 @@ set -eu
 
 command=${1:-}
 manifest=${2:-dependencies.txt}
-source_path=${FAKE_MANAGED_SOURCE:?}
-destination=vendor/doxygen-bash.awk
+filter_source=${FAKE_FILTER_SOURCE:?}
+minifier_source=${FAKE_MINIFIER_SOURCE:?}
+filter_destination=vendor/doxygen-bash.awk
+minifier_destination=vendor/bash-minifier.bash
 
 [[ -r $manifest ]]
 
+sync_one() {
+  local source=$1
+  local destination=$2
+
+  mkdir -p "$(dirname "$destination")"
+  if [[ ! -f $destination ]] || ! cmp -s "$source" "$destination"; then
+    cp "$source" "$destination"
+    if [[ -n ${FAKE_SYNC_REPLACED_MARKER:-} ]]; then
+      : >"$FAKE_SYNC_REPLACED_MARKER"
+    fi
+  fi
+}
+
+verify_one() {
+  local source=$1
+  local destination=$2
+
+  [[ -f $destination ]]
+  cmp -s "$source" "$destination"
+}
+
 case $command in
   sync)
-    mkdir -p vendor
-    if [[ ! -f $destination ]] || ! cmp -s "$source_path" "$destination"; then
-      cp "$source_path" "$destination"
-      if [[ -n ${FAKE_SYNC_REPLACED_MARKER:-} ]]; then
-        : >"$FAKE_SYNC_REPLACED_MARKER"
-      fi
-    fi
+    sync_one "$filter_source" "$filter_destination"
+    sync_one "$minifier_source" "$minifier_destination"
     ;;
   verify)
-    [[ -f $destination ]]
-    cmp -s "$source_path" "$destination"
+    verify_one "$filter_source" "$filter_destination"
+    verify_one "$minifier_source" "$minifier_destination"
     ;;
   *)
     exit 64
@@ -74,7 +98,8 @@ run_make() {
     PATH="$WORK/mock-bin:$PATH" \
     FAKE_CURL_SOURCE="${FAKE_CURL_SOURCE:-$WORK/fake-bashdeps}" \
     FAKE_CURL_MARKER="${FAKE_CURL_MARKER:-}" \
-    FAKE_MANAGED_SOURCE="$WORK/managed-source" \
+    FAKE_FILTER_SOURCE="$WORK/managed-filter-source" \
+    FAKE_MINIFIER_SOURCE="$WORK/managed-minifier-source" \
     FAKE_SYNC_REPLACED_MARKER="${FAKE_SYNC_REPLACED_MARKER:-}" \
     make -C "$WORK" \
       BASHDEPS_URL=https://example.test/bashdeps.bash \
@@ -82,13 +107,13 @@ run_make() {
       "$@"
 }
 
-@test "plain build succeeds without acquiring dependency state" {
+@test "plain build fails without acquiring dependency state" {
   run make -C "$WORK" build VERSION=0.0.0-test
 
-  [ "$status" -eq 0 ]
-  [ -x "$WORK/dist/bashdeps.bash" ]
-  [ -x "$WORK/dist/bashdeps.dev.bash" ]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Missing Bash-Minifier build dependency"* ]]
   [ ! -e "$WORK/vendor" ]
+  [ ! -e "$WORK/dist" ]
 }
 
 @test "deps bootstraps released bashdeps and converges managed state" {
@@ -100,7 +125,8 @@ run_make() {
   [ "$status" -eq 0 ]
   [ -x "$WORK/vendor/bashdeps.bash" ]
   cmp -s "$WORK/fake-bashdeps" "$WORK/vendor/bashdeps.bash"
-  cmp -s "$WORK/managed-source" "$WORK/vendor/doxygen-bash.awk"
+  cmp -s "$WORK/managed-filter-source" "$WORK/vendor/doxygen-bash.awk"
+  cmp -s "$WORK/managed-minifier-source" "$WORK/vendor/bash-minifier.bash"
   [ -e "$WORK/curl-called" ]
   [ -e "$WORK/replaced" ]
 
@@ -111,27 +137,27 @@ run_make() {
   [ ! -e "$WORK/curl-called" ]
   [ ! -e "$WORK/replaced" ]
 
-  printf '%s\n' 'stale managed bytes' >"$WORK/vendor/doxygen-bash.awk"
+  printf '%s\n' 'stale minifier bytes' >"$WORK/vendor/bash-minifier.bash"
   FAKE_SYNC_REPLACED_MARKER="$WORK/replaced"
   run run_make deps
 
   [ "$status" -eq 0 ]
   [ -e "$WORK/replaced" ]
-  cmp -s "$WORK/managed-source" "$WORK/vendor/doxygen-bash.awk"
+  cmp -s "$WORK/managed-minifier-source" "$WORK/vendor/bash-minifier.bash"
 }
 
-@test "deps-check detects tampering without network repair" {
+@test "deps-check detects minifier tampering without network repair" {
   run run_make deps
   [ "$status" -eq 0 ]
 
-  printf '%s\n' 'tampered bytes' >"$WORK/vendor/doxygen-bash.awk"
+  printf '%s\n' 'tampered bytes' >"$WORK/vendor/bash-minifier.bash"
   FAKE_CURL_MARKER="$WORK/curl-called"
 
   run run_make deps-check
 
   [ "$status" -ne 0 ]
   [ ! -e "$WORK/curl-called" ]
-  [ "$(cat "$WORK/vendor/doxygen-bash.awk")" = 'tampered bytes' ]
+  [ "$(cat "$WORK/vendor/bash-minifier.bash")" = 'tampered bytes' ]
 }
 
 @test "failed bootstrap digest verification preserves existing bytes" {
@@ -148,20 +174,42 @@ run_make() {
   [ ! -e "$WORK/vendor/bashdeps.bash.tmp" ]
 }
 
-@test "all synchronizes dependencies before building" {
+@test "prepared build remains network-free" {
+  run run_make deps
+  [ "$status" -eq 0 ]
+
+  FAKE_CURL_MARKER="$WORK/curl-called"
+  run run_make build VERSION=0.0.0-test
+
+  [ "$status" -eq 0 ]
+  [ ! -e "$WORK/curl-called" ]
+  [ -x "$WORK/dist/bashdeps.dev.bash" ]
+  [ -x "$WORK/dist/bashdeps.bash" ]
+  [ -x "$WORK/dist/bashdeps.min.bash" ]
+}
+
+@test "all synchronizes dependencies before building all release flavors" {
   run run_make all VERSION=0.0.0-test
 
   [ "$status" -eq 0 ]
-  cmp -s "$WORK/managed-source" "$WORK/vendor/doxygen-bash.awk"
+  cmp -s "$WORK/managed-filter-source" "$WORK/vendor/doxygen-bash.awk"
+  cmp -s "$WORK/managed-minifier-source" "$WORK/vendor/bash-minifier.bash"
+  [ -x "$WORK/dist/bashdeps.dev.bash" ]
   [ -x "$WORK/dist/bashdeps.bash" ]
+  [ -x "$WORK/dist/bashdeps.min.bash" ]
+  [ -f "$WORK/dist/bashdeps.dev.bash.256" ]
+  [ -f "$WORK/dist/bashdeps.bash.256" ]
+  [ -f "$WORK/dist/bashdeps.min.bash.256" ]
 }
 
 @test "distclean removes generated vendor and reference state" {
   mkdir -p "$WORK/vendor" "$WORK/doc/reference" "$WORK/dist"
   : >"$WORK/vendor/bashdeps.bash"
   : >"$WORK/vendor/doxygen-bash.awk"
+  : >"$WORK/vendor/bash-minifier.bash"
   : >"$WORK/doc/reference/index.html"
   : >"$WORK/dist/bashdeps.bash"
+  : >"$WORK/dist/bashdeps.min.bash"
 
   run make -C "$WORK" distclean
 
@@ -171,13 +219,15 @@ run_make() {
   [ ! -e "$WORK/dist" ]
 }
 
-@test "generated consumer artifact runs without bootstrap manifest or vendor tree" {
-  run make -C "$WORK" build VERSION=0.0.0-test
+@test "generated release artifacts run without bootstrap manifest or vendor tree" {
+  run run_make all VERSION=0.0.0-test
   [ "$status" -eq 0 ]
 
   rm -rf "$WORK/vendor" "$WORK/dependencies.txt"
-  run "$WORK/dist/bashdeps.bash" --version
 
-  [ "$status" -eq 0 ]
-  [[ "$output" == bashdeps.bash\ * ]]
+  for artifact in bashdeps.dev.bash bashdeps.bash bashdeps.min.bash; do
+    run "$WORK/dist/$artifact" --version
+    [ "$status" -eq 0 ]
+    [[ "$output" == bashdeps.bash\ * ]]
+  done
 }

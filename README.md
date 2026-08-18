@@ -457,23 +457,32 @@ bashdeps source tree
   -> Make bootstraps and verifies released vendor/bashdeps.bash
   -> released vendor/bashdeps.bash syncs dependencies.txt
        -> vendor/doxygen-bash.awk
+       -> vendor/bash-minifier.bash
   -> source tree builds/tests the next bashdeps revision
 ```
 
 The Makefile currently pins released bashdeps v0.0.6 as the bootstrap tool.  The
 bootstrap is intentionally excluded from `dependencies.txt`.
 
-The only manifest-managed artifact in this repository is `bash-doxygen` v0.0.6,
-using an immutable tag URL and committed SHA-256 digest.  It is required only for
-reference documentation.  It is not a build or runtime dependency.
+The manifest currently manages two external development/build artifacts:
 
-Consequently, a clean `make build` succeeds without creating `vendor/`.
-`make all` explicitly runs dependency synchronization first and then builds, while
+- `bash-doxygen` v0.0.6 for reference documentation; and
+- Bash-Minifier at commit `9c824e20815a5bca2153ec25ecc02a4edea1430e`
+  for the minified release flavor.
+
+The Bash-Minifier upstream file is `Minify.sh`; bashdeps materializes the reviewed
+bytes at `vendor/bash-minifier.bash`.  The build invokes that managed file through
+`bash`, so dependency mode remains owned by bashdeps rather than inferred from its
+purpose.
+
+A clean `make build` now fails clearly until `vendor/bash-minifier.bash` has been
+prepared.  It does not download or repair the missing dependency.  `make all`
+explicitly runs dependency synchronization first and then builds, while
 `make deps-check` verifies existing bootstrap and manifest state without network
 repair.
 
-See ADR-017 for the self-hosting, trust, target, CI, release, and runtime isolation
-decisions.
+See ADR-017 for the self-hosting and dependency-management architecture and
+ADR-018 for the superseding build-input and three-flavor release decisions.
 
 ## Build and Release Artifacts
 
@@ -483,23 +492,35 @@ Maintained source lives at:
 src/bashdeps.bash
 ```
 
-`make build` generates:
+After dependencies have been prepared, `make build` generates exactly six release
+files:
 
 ```text
 dist/bashdeps.dev.bash
-dist/bashdeps.dev.bash.256
 dist/bashdeps.bash
+dist/bashdeps.min.bash
+dist/bashdeps.dev.bash.256
 dist/bashdeps.bash.256
+dist/bashdeps.min.bash.256
 ```
 
-`bashdeps.dev.bash` retains source comments.
+`bashdeps.dev.bash` is the complete assembled developer artifact and retains
+source/documentation comments.
 
-`bashdeps.bash` is the normal consumer artifact and removes full-line source
-comments while preserving executable behavior.
+`bashdeps.bash` remains the normal consumer artifact.  It is derived from the
+complete developer artifact by removing full-line comments while retaining the
+shebang.
 
-Each Bash artifact has one checksum companion whose filename is the artifact name
-plus `.256`.  The checksum file uses conventional checksum-tool syntax, so from
-`dist/` the normal artifact can be verified with:
+`bashdeps.min.bash` is derived from the completed comment-stripped
+`bashdeps.bash` artifact through the commit-pinned Bash-Minifier dependency.
+Because stripping and minification occur after complete program assembly, the
+same transformations also apply to any libraries incorporated into the generated
+program rather than only to `src/bashdeps.bash`.
+
+All three Bash artifacts are executable and expose the same public CLI behavior.
+Each has one checksum companion whose filename is the artifact name plus `.256`.
+The checksum file uses conventional checksum-tool syntax, so from `dist/` the
+ordinary artifact can be verified with:
 
 ```bash
 sha256sum -c bashdeps.bash.256
@@ -507,15 +528,15 @@ sha256sum -c bashdeps.bash.256
 
 or the supported `shasum` equivalent.
 
-This project does not generate an aggregate `SHA256SUMS` file and does not
-generate a minified artifact.
+This project does not generate an aggregate `SHA256SUMS` file.
 
-The same public behavior suite is run against maintained source and both generated
-Bash artifacts.
+The same public behavior suite is run against maintained source and all three
+generated Bash artifacts.  The minified artifact is accepted only when syntax,
+Bash 4.3 compatibility, checksum, and public behavior tests pass.
 
-Release artifact generation does not consume the documentation-only dependency
-manifest.  The released executables remain independent of `dependencies.txt`,
-`vendor/bashdeps.bash`, and `vendor/doxygen-bash.awk`.
+The build consumes `vendor/bash-minifier.bash`, but released executables remain
+independent of `dependencies.txt`, `vendor/bashdeps.bash`,
+`vendor/bash-minifier.bash`, and `vendor/doxygen-bash.awk` at runtime.
 
 ## Development
 
@@ -536,6 +557,7 @@ make test
 make test-source
 make test-dev
 make test-dist
+make test-min
 make test-build-deps
 make docs
 make docs-clean
@@ -545,8 +567,10 @@ make distclean
 
 `make deps` may use the network to bootstrap the pinned released bashdeps tool and
 synchronize `dependencies.txt`.  `make deps-check` is the offline, non-repairing
-verification path.  `make build` does not acquire or verify development
-dependencies.
+verification path.  `make build` remains network-free and does not acquire or
+verify dependencies, but it requires the already-prepared
+`vendor/bash-minifier.bash` build input.  Use `make all` for a fresh checkout or
+run `make deps` before `make build`.
 
 Bats is the primary behavior-test framework.  Ordinary tests use controlled local
 fixtures rather than live public network services.
@@ -564,10 +588,11 @@ manifest-managed `vendor/doxygen-bash.awk` through `make deps`, applies the
 executable mode required by Doxygen, and writes the generated site under
 `doc/reference/`.
 
-The released bootstrap, manifest-managed filter, and generated reference directory
-are generated state ignored by Git.  Use `make docs-clean` to remove only generated
-reference documentation or `make distclean` to remove normal build output,
-reference documentation, and the complete generated `vendor/` tree.
+The released bootstrap, manifest-managed Bash-Minifier and Doxygen filter, and
+generated reference directory are generated state ignored by Git.  Use
+`make docs-clean` to remove only generated reference documentation or
+`make distclean` to remove normal build output, reference documentation, and the
+complete generated `vendor/` tree.
 
 Generated Doxygen output is not committed to this repository.  On pushes to
 `main`, `.github/workflows/static.yml` installs Doxygen, runs the same `make docs`

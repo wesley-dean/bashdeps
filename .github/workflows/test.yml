@@ -30,10 +30,12 @@ jobs:
 
       - name: Verify build does not acquire dependencies
         run: |
-          make build VERSION=0.0.0-ci
-          test -x dist/bashdeps.bash
+          if make build VERSION=0.0.0-ci; then
+            echo 'make build unexpectedly succeeded without Bash-Minifier' >&2
+            exit 1
+          fi
           test ! -e vendor
-          make clean
+          test ! -e dist
 
       - name: Synchronize project dependencies
         run: make deps
@@ -64,7 +66,7 @@ jobs:
             --volume "${GITHUB_WORKSPACE}:/work:ro" \
             --workdir /work \
             bash:4.3 \
-            bash -c 'BASHDEPS_EXECUTABLE=src/bashdeps.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.dev.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.bash bash tests/compat-bash.bash'
+            bash -c 'BASHDEPS_EXECUTABLE=src/bashdeps.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.dev.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.min.bash bash tests/compat-bash.bash'
 
   docs:
     runs-on: ubuntu-24.04

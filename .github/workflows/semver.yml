@@ -29,7 +29,13 @@ jobs:
       - name: Install validation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes bats shellcheck
+          sudo apt-get install --yes bats curl shellcheck
+
+      - name: Prepare build dependencies
+        run: make deps
+
+      - name: Verify build dependencies
+        run: make deps-check
 
       - name: Validate distribution pipeline before versioning
         run: make check test VERSION=0.0.0-ci
@@ -42,14 +48,14 @@ jobs:
           initial_version: 0.0.1
           tag_prefix: v
 
-      - name: Build release artifacts without development dependency state
-        run: |
-          test ! -e vendor
-          make build VERSION="${{ steps.calculate-version.outputs.version-string }}"
-          test ! -e vendor
+      - name: Verify prepared dependency state before release build
+        run: make deps-check
+
+      - name: Build release artifacts from prepared dependency state
+        run: make build VERSION="${{ steps.calculate-version.outputs.version-string }}"
 
       - name: Validate release artifacts
-        run: make test-dev test-dist VERSION="${{ steps.calculate-version.outputs.version-string }}"
+        run: make test-dev test-dist test-min VERSION="${{ steps.calculate-version.outputs.version-string }}"
 
       - name: Generate release notes
         id: release-notes
@@ -73,3 +79,5 @@ jobs:
             dist/bashdeps.dev.bash.256
             dist/bashdeps.bash
             dist/bashdeps.bash.256
+            dist/bashdeps.min.bash
+            dist/bashdeps.min.bash.256

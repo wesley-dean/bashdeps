@@ -21,13 +21,15 @@ infer whether an artifact is executable.
 
 The canonical maintained implementation is `src/bashdeps.bash`.
 
-`make build` generates:
+After build dependencies have been prepared, `make build` generates:
 
 ```text
 dist/bashdeps.dev.bash
-dist/bashdeps.dev.bash.256
 dist/bashdeps.bash
+dist/bashdeps.min.bash
+dist/bashdeps.dev.bash.256
 dist/bashdeps.bash.256
+dist/bashdeps.min.bash.256
 ```
 
 The supported public interface is the `bashdeps.bash` executable CLI.  There is no
@@ -40,7 +42,8 @@ The ADR collection is the canonical source of architectural intent.
 Before making significant changes, review the relevant files under `doc/adr/`.
 Also review `doc/bashdeps-spec.md` whenever a change can affect observable public
 behavior.  Source-code documentation work SHALL follow ADR-014.  Repository
-self-hosting and development-dependency work SHALL follow ADR-017.
+self-hosting and development-dependency work SHALL follow ADR-017.  Build flavor,
+minification, and release-artifact work SHALL follow ADR-018.
 
 Preserve these foundational boundaries:
 
@@ -63,9 +66,13 @@ Preserve these foundational boundaries:
   `vendor/bashdeps.bash` development tool;
 - that bootstrap is excluded from `dependencies.txt` and independently verified
   before execution;
-- ordinary external development artifacts are declared in `dependencies.txt`;
-- the current manifest contains only the documentation-only Bash Doxygen filter;
-- `make build` does not acquire, verify, or require development dependency state;
+- ordinary external development/build artifacts are declared in
+  `dependencies.txt`;
+- the current manifest contains the documentation-only Bash Doxygen filter and
+  the build-time Bash-Minifier input;
+- `make build` does not acquire, repair, or verify dependency state;
+- `make build` requires an already-prepared `vendor/bash-minifier.bash` and fails
+  clearly when it is absent;
 - `make deps-check` is network-free and non-repairing; and
 - released bashdeps artifacts do not require `vendor/` or `dependencies.txt` at
   runtime.
@@ -127,11 +134,13 @@ Development:
 - ShellCheck
 - shfmt
 - Doxygen for reference generation
+- commit-pinned Bash-Minifier for the minified distribution flavor
 - GitHub Actions
 
 ## Development Dependency Management
 
-ADR-017 defines the source repository's deliberate self-hosting boundary.
+ADR-017 defines the source repository's deliberate self-hosting boundary.  ADR-018
+adds Bash-Minifier as a real build input while preserving that dependency model.
 
 Make directly owns only:
 
@@ -147,38 +156,45 @@ replaced only after a staged candidate verifies successfully.
 Do not put `vendor/bashdeps.bash` in `dependencies.txt`; the bootstrap executable
 must exist before the manifest can be processed.
 
-The committed `dependencies.txt` file owns ordinary external development
-artifacts.  At present it declares only:
+The committed `dependencies.txt` file owns ordinary external development/build
+artifacts.  At present it declares:
 
 ```text
 vendor/doxygen-bash.awk
+vendor/bash-minifier.bash
 ```
 
-using the immutable bash-doxygen v0.0.6 tag and committed digest.  The selected
-released bootstrap predates ADR-015 manifest folding, so keep repository manifest
-records on one physical line until the bootstrap pin intentionally moves to a
-compatible release.
+The Doxygen filter uses the immutable bash-doxygen v0.0.6 tag and committed
+digest.  Bash-Minifier uses exact upstream commit
+`9c824e20815a5bca2153ec25ecc02a4edea1430e` and is materialized from upstream
+`Minify.sh` at the local path `vendor/bash-minifier.bash`.
+
+The selected released bootstrap predates ADR-015 manifest folding, so keep
+repository manifest records on one physical line until the bootstrap pin
+intentionally moves to a compatible release.
 
 Target boundaries are explicit:
 
 ```text
 make deps        bootstrap/verify released bashdeps, then sync dependencies.txt
 make deps-check  verify existing bootstrap and manifest state without repair
-make build       build only from maintained source; do not touch vendor state
+make build       consume prepared build inputs; do not acquire or verify them
 make all         deps, then build
 make docs        prepare deps, then generate reference documentation
 ```
 
-`make deps` and therefore `make all`/`make docs` may use the network.  `make
-deps-check` must not use the network.  `make build` must not invoke dependency
-preparation and currently succeeds from a clean checkout because the manifest
-contains documentation tooling only.
+`make deps` and therefore `make all`/`make docs` may use the network.
+`make deps-check` must not use the network.  `make build` must not invoke
+dependency preparation or verification and must not repair missing dependency
+state.  It requires readable `vendor/bash-minifier.bash`; a fresh checkout should
+use `make all` or run `make deps` before `make build`.
 
 The complete `vendor/` tree is generated state.  `make distclean` removes it.
 
-The Doxygen filter is published by bashdeps as ordinary mode `0644` data.  The
-`docs` consumer target applies executable mode before Doxygen uses it.  Do not add
-mode inference to bashdeps merely to satisfy this repository's documentation
+Manifest-managed tools normally arrive as ordinary mode `0644` data.  The Doxygen
+consumer applies executable mode to its AWK filter.  The build invokes
+`vendor/bash-minifier.bash` through `bash`, so the minifier does not need a mode
+exception.  Do not add purpose or executable-mode inference to bashdeps for either
 consumer.
 
 ## Coding Guidelines
@@ -215,38 +231,49 @@ accepted platform utilities implement the behavior clearly and safely.
 Treat `src/bashdeps.bash` as the source of truth.  Do not edit generated files
 under `dist/` directly.
 
-`dist/bashdeps.dev.bash` retains source comments.
+ADR-018 defines the current three-flavor release contract.
 
-`dist/bashdeps.bash` removes full-line source comments only.  Do not introduce
-minification, inline-comment stripping, whitespace normalization, transpilation,
-or other executable-source rewriting without a new architectural decision.
+`dist/bashdeps.dev.bash` is assembled first and retains source/documentation
+comments together with generated release metadata.
 
-The project does not generate `bashdeps.min.bash`.
+`dist/bashdeps.bash` remains the normal consumer artifact.  It is derived from the
+complete developer artifact by removing full-line comments after the shebang.
+The comment-stripping transformation therefore applies to every component already
+assembled into the program, including incorporated libraries if the build later
+gains them.
 
-Generated artifacts embed version, source revision timestamp/build date, and
-commit metadata.
+`dist/bashdeps.min.bash` is derived from the completed comment-stripped artifact
+through the commit-pinned `vendor/bash-minifier.bash` build dependency.  Do not
+minify individual source or library fragments separately.
+
+All three generated Bash artifacts retain a valid shebang, executable mode, the
+same public CLI contract, and generated version/build/commit metadata as
+applicable to the complete program.
 
 Each generated Bash artifact has one checksum companion:
 
 ```text
 dist/bashdeps.dev.bash.256
 dist/bashdeps.bash.256
+dist/bashdeps.min.bash.256
 ```
 
 Each `.256` file contains the SHA-256 digest and matching artifact filename in
 conventional checksum-tool syntax.  The project does not generate an aggregate
 `SHA256SUMS` file.
 
-Tests must cover maintained source and both generated Bash artifacts.
+Tests must cover maintained source and all three generated Bash artifacts.
+Minifier success is not proof of semantic equivalence; the generated minified
+artifact must pass syntax, Bash 4.3, checksum, and public behavior validation.
 
-`make build` has no external manifest-managed input in the current architecture.
-It must not bootstrap bashdeps, synchronize `dependencies.txt`, verify development
-state, or create `vendor/`.
+`make build` is network-free and non-repairing.  It must not bootstrap bashdeps,
+synchronize `dependencies.txt`, run `deps-check`, or otherwise acquire/verify
+vendor state.  It must fail clearly before publishing build output when the
+required Bash-Minifier input is absent.
 
-The versioning/release workflow likewise builds consumer artifacts without the
-documentation-only dependency tree and asserts that release generation does not
-create `vendor/`.  Do not couple release availability to the Doxygen filter unless
-a future release artifact genuinely consumes it.
+The versioning/release workflow must prepare and verify dependencies before
+running the release build, then publish all six release files.  Released
+executables must continue to run without the vendor tree or manifest.
 
 ## Scope Discipline
 
@@ -322,16 +349,17 @@ Run the same public behavior suite against:
 
 - `src/bashdeps.bash`;
 - `dist/bashdeps.dev.bash`;
-- `dist/bashdeps.bash`.
+- `dist/bashdeps.bash`;
+- `dist/bashdeps.min.bash`.
 
 Generated artifacts are products and must not be assumed correct because source
-tests passed.
+or another generated flavor passed.
 
-Repository orchestration tests run separately from the three public-artifact
+Repository orchestration tests run separately from the four public-artifact
 behavior passes.  They should exercise Make/bootstrap/dependency boundaries with
-controlled fake bootstrap/download inputs so ordinary tests remain deterministic.
-CI may additionally exercise the real pinned released bootstrap and immutable
-manifest URL.
+controlled fake bootstrap/download/minifier inputs so ordinary tests remain
+deterministic.  CI may additionally exercise the real pinned released bootstrap
+and immutable manifest URLs.
 
 Every functional change should prompt these questions:
 
@@ -351,22 +379,24 @@ When practical:
 
 - review the resulting diff;
 - run Bash syntax validation on maintained source and executable test helpers;
-- run Bats tests against source and both generated artifacts;
+- run Bats tests against source and all three generated artifacts;
 - run the Make/bootstrap dependency-boundary regression tests;
 - run ShellCheck on `src/bashdeps.bash` only; do not run ShellCheck on tests;
 - run shfmt checks on maintained source and executable test helpers;
-- verify a clean `make build` does not create `vendor/`;
-- synchronize real development dependencies with `make deps` when integration
-  validation is appropriate;
+- verify a clean `make build` fails without acquiring or creating dependency
+  state when Bash-Minifier is absent;
+- synchronize real development/build dependencies with `make deps` when
+  integration validation is appropriate;
 - verify synchronized state offline with `make deps-check`;
 - verify `make all` sequences dependency preparation before build;
 - verify `make docs` uses the manifest-managed Doxygen filter;
-- verify generated artifact metadata;
-- verify `dist/bashdeps.dev.bash.256` and `dist/bashdeps.bash.256` against the final
-  generated bytes;
+- verify generated artifact metadata and executable modes;
+- verify `dist/bashdeps.dev.bash.256`, `dist/bashdeps.bash.256`, and
+  `dist/bashdeps.min.bash.256` against final generated bytes;
+- verify `dist/bashdeps.bash` contains no full-line comments after its shebang;
 - confirm `verify` tests do not accidentally reach the network;
-- confirm generated release artifacts run without the vendor tree or manifest;
-- confirm generated comment removal does not alter observable behavior;
+- confirm all generated release artifacts run without the vendor tree or manifest;
+- confirm comment removal and minification do not alter observable behavior; and
 - for documentation-only Bash changes, confirm non-comment lines are unchanged.
 
 Report only validation that actually ran.
@@ -393,20 +423,28 @@ Avoid:
 - editing generated distribution artifacts;
 - changing executable code during a documentation-only source update;
 - inventing source-code rationale instead of marking genuine ambiguity with `@TODO`;
-- introducing minification into this project;
 - claiming multi-file transactionality or concurrency guarantees version 1 does
   not provide;
 - putting `vendor/bashdeps.bash` in the manifest it is required to process;
 - using unreleased `src/bashdeps.bash` as the repository bootstrap tool;
-- reintroducing direct Make acquisition for manifest-managed development artifacts;
-- using moving `main`/`master` URLs when an immutable release or tag is available;
-- making `make build` implicitly synchronize or verify development dependencies;
-- making `make deps-check` bootstrap, download, or repair state; or
-- coupling release artifact generation to documentation-only dependency state.
+- reintroducing direct Make acquisition for manifest-managed development/build
+  artifacts;
+- using moving `main`/`master` URLs when an immutable release, tag, or commit can
+  be used;
+- making `make build` implicitly synchronize, verify, or repair dependencies;
+- making `make deps-check` bootstrap, download, or repair state;
+- minifying source/library fragments before complete program assembly;
+- treating Bash-Minifier exit success as proof of semantic equivalence;
+- changing `bashdeps.bash` to mean the minified flavor; or
+- coupling released executables to Bash-Minifier, the bootstrap, the manifest, or
+  the vendor tree at runtime.
 
 ## Final Principle
 
 `bashdeps` knows how to materialize exact approved bytes at declared local paths
 and almost nothing about what those bytes mean.
+
+Its own source repository may use those exact-byte guarantees to prepare build
+tooling, while the released CLI remains self-contained.
 
 Every change should preserve that clarity.
