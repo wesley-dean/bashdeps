@@ -30,6 +30,39 @@ jobs:
       - name: Run project validation
         run: make check test
 
+  dependency-integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pin@v4
+
+      - name: Install integration dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes curl doxygen
+
+      - name: Verify build remains dependency-management-free
+        run: |
+          make build VERSION=0.0.0-ci
+          test ! -e vendor/bashdeps.bash
+          rm -rf dist
+
+      - name: Exercise documented consumer integration
+        run: |
+          make all VERSION=0.0.0-ci
+          test -x vendor/bashdeps.bash
+          test -f vendor/mktext.bash
+          test -f vendor/doxygen-bash.awk
+          make deps-check
+          test -x dist/bashdeps.bash
+
+      - name: Generate documentation through synchronized filter
+        run: |
+          make docs
+          test -f doc/reference/index.html
+          test -x vendor/doxygen-bash.awk
+          make deps-check
+
   bash-4-3:
     runs-on: ubuntu-24.04
     steps:
