@@ -18,17 +18,22 @@ TEST_HELPERS := $(TESTS_DIR)/test_helper.bash
 COMPAT_TEST := $(TESTS_DIR)/compat-bash.bash
 
 VENDOR_DIR := vendor
+DEPENDENCY_MANIFEST := dependencies.txt
+BASHDEPS := $(VENDOR_DIR)/bashdeps.bash
+BASHDEPS_VERSION := 0.0.6
+BASHDEPS_URL := https://github.com/wesley-dean/bashdeps/releases/download/v$(BASHDEPS_VERSION)/bashdeps.bash
+BASHDEPS_SHA256 := bb6c807fa12c010950bda06172ac0611d278c57aca1f8352f41502d0d76b4e6c
 DOXYGEN_BASH_FILTER := $(VENDOR_DIR)/doxygen-bash.awk
-DOXYGEN_BASH_FILTER_URL := https://raw.githubusercontent.com/wesley-dean/bash-doxygen/refs/heads/main/doxygen-bash.awk
 REFERENCE_DOC_DIR := doc/reference
 
 VERSION ?= 0.0.0-dev
 BUILD_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')
 BUILD_DATE ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || printf 'unknown')
 
-.PHONY: all build check clean distclean docs docs-clean format test test-source test-dev test-dist
+.PHONY: all build check clean deps deps-check distclean docs docs-clean format test test-source test-dev test-dist verify-bashdeps FORCE
 
-all: build
+all: deps
+	$(MAKE) --no-print-directory build
 
 build: $(SOURCE)
 	mkdir -p "$(DIST_DIR)"
@@ -107,13 +112,77 @@ test-dist: build
 	test ! -e "$(LEGACY_CHECKSUMS)"
 
 ##
-# Download the Bash Doxygen filter used to preprocess maintained shell source.
+# Force the bootstrap file target to validate cached bytes whenever it is requested.
 #
-$(DOXYGEN_BASH_FILTER):
-	mkdir -p "$(VENDOR_DIR)"
-	curl -fsSL "$(DOXYGEN_BASH_FILTER_URL)" -o "$@.tmp"
-	chmod 0755 "$@.tmp"
-	mv "$@.tmp" "$@"
+FORCE:
+
+##
+# Bootstrap the pinned released bashdeps executable used to process dependencies.txt.
+#
+$(BASHDEPS): FORCE
+	@mkdir -p "$(VENDOR_DIR)"
+	@verify_hash() { \
+		path=$$1; \
+		if command -v sha256sum >/dev/null 2>&1; then \
+			printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$$path" | sha256sum -c - >/dev/null 2>&1; \
+		elif command -v shasum >/dev/null 2>&1; then \
+			printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$$path" | shasum -a 256 -c - >/dev/null 2>&1; \
+		else \
+			return 2; \
+		fi; \
+	}; \
+	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then \
+		printf '%s\n' 'No SHA-256 command is available to verify bashdeps.bash' >&2; \
+		exit 1; \
+	fi; \
+	if [[ -f "$@" ]] && verify_hash "$@"; then \
+		chmod 0755 "$@"; \
+		exit 0; \
+	fi; \
+	if ! command -v curl >/dev/null 2>&1; then \
+		printf '%s\n' 'curl is required to bootstrap bashdeps.bash' >&2; \
+		exit 1; \
+	fi; \
+	tmp="$@.tmp"; \
+	trap 'rm -f "'"'"'$$tmp'"'"'"' EXIT; \
+	curl -fsSL "$(BASHDEPS_URL)" -o "$$tmp"; \
+	if ! verify_hash "$$tmp"; then \
+		printf '%s\n' 'Downloaded bashdeps.bash does not match the committed SHA-256 digest' >&2; \
+		exit 1; \
+	fi; \
+	chmod 0755 "$$tmp"; \
+	mv "$$tmp" "$@"; \
+	trap - EXIT
+
+##
+# Verify the already-present bootstrap artifact without network access or repair.
+#
+verify-bashdeps:
+	@test -x "$(BASHDEPS)" || { \
+		printf '%s\n' 'Missing or non-executable bashdeps bootstrap; run make deps' >&2; \
+		exit 1; \
+	}
+	@if command -v sha256sum >/dev/null 2>&1; then \
+		printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$(BASHDEPS)" | sha256sum -c - >/dev/null; \
+	elif command -v shasum >/dev/null 2>&1; then \
+		printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$(BASHDEPS)" | shasum -a 256 -c - >/dev/null; \
+	else \
+		printf '%s\n' 'No SHA-256 command is available to verify bashdeps.bash' >&2; \
+		exit 1; \
+	fi
+
+##
+# Synchronize manifest-managed project dependencies through the bootstrap artifact.
+#
+deps: $(BASHDEPS) $(DEPENDENCY_MANIFEST)
+	$(MAKE) --no-print-directory verify-bashdeps
+	"$(BASHDEPS)" sync "$(DEPENDENCY_MANIFEST)"
+
+##
+# Verify bootstrap and manifest-managed dependency state without network access.
+#
+deps-check: verify-bashdeps $(DEPENDENCY_MANIFEST)
+	"$(BASHDEPS)" verify "$(DEPENDENCY_MANIFEST)"
 
 ##
 # Remove generated Doxygen reference documentation.
@@ -124,7 +193,8 @@ docs-clean:
 ##
 # Generate browsable Doxygen reference documentation from maintained Bash source.
 #
-docs: docs-clean $(DOXYGEN_BASH_FILTER)
+docs: docs-clean deps
+	chmod 0755 "$(DOXYGEN_BASH_FILTER)"
 	mkdir -p "$(REFERENCE_DOC_DIR)"
 	doxygen Doxyfile
 
@@ -132,8 +202,7 @@ clean:
 	rm -rf "$(DIST_DIR)"
 
 ##
-# Remove ordinary build output, generated reference docs, and downloaded docs tooling.
+# Remove ordinary build output, generated reference docs, and vendored dependencies.
 #
 distclean: clean docs-clean
-	$(RM) -f "$(DOXYGEN_BASH_FILTER)"
-	-rmdir "$(VENDOR_DIR)" >/dev/null 2>&1
+	rm -rf "$(VENDOR_DIR)"
