@@ -392,32 +392,44 @@ BASHDEPS := vendor/bashdeps.bash
 BASHDEPS_URL := https://github.com/wesley-dean/bashdeps/releases/download/v$(BASHDEPS_VERSION)/bashdeps.bash
 BASHDEPS_SHA256 := <64-lowercase-hex-digest>
 
-.PHONY: deps deps-check verify-bashdeps
+.PHONY: deps deps-check FORCE verify-bashdeps
 
-$(BASHDEPS):
-	mkdir -p "$(dir $@)"
-	curl -fsSL "$(BASHDEPS_URL)" -o "$@.tmp"
-	printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$@.tmp" | sha256sum -c -
-	chmod 0755 "$@.tmp"
-	mv "$@.tmp" "$@"
+FORCE:
+
+$(BASHDEPS): FORCE
+	@mkdir -p "$(dir $@)"
+	@if [[ -f "$@" ]] && \
+		printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$@" | sha256sum -c - >/dev/null 2>&1; then \
+		chmod 0755 "$@"; \
+		exit 0; \
+	fi; \
+	tmp="$@.tmp"; \
+	trap 'rm -f "$$tmp"' EXIT; \
+	curl -fsSL "$(BASHDEPS_URL)" -o "$$tmp"; \
+	printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$$tmp" | sha256sum -c - >/dev/null; \
+	chmod 0755 "$$tmp"; \
+	mv "$$tmp" "$@"; \
+	trap - EXIT
 
 verify-bashdeps:
 	test -x "$(BASHDEPS)"
-	printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$(BASHDEPS)" | sha256sum -c -
+	printf '%s  %s\n' "$(BASHDEPS_SHA256)" "$(BASHDEPS)" | sha256sum -c - >/dev/null
 
-deps: $(BASHDEPS)
+deps: $(BASHDEPS) dependencies.txt
 	$(MAKE) --no-print-directory verify-bashdeps
 	"$(BASHDEPS)" sync dependencies.txt
 
-deps-check: verify-bashdeps
+deps-check: verify-bashdeps dependencies.txt
 	"$(BASHDEPS)" verify dependencies.txt
 ```
 
-`deps` may bootstrap `vendor/bashdeps.bash` when it is absent, but it still
-verifies that bootstrap artifact before allowing it to interpret
-`dependencies.txt`.  `deps-check` deliberately has no dependency on
-`$(BASHDEPS)`, so a missing bootstrap executable causes the check to fail rather
-than reaching the network.
+The forced bootstrap target validates cached bytes every time `deps` is requested.
+Correct bytes are reused without network access.  Missing or mismatched bytes are
+downloaded to staging, verified, and only then published at the bootstrap path.
+
+`deps-check` deliberately has no dependency on `$(BASHDEPS)`, so a missing or
+invalid bootstrap executable causes the check to fail rather than reaching the
+network or repairing state.
 
 The recommended target boundary is therefore:
 
@@ -434,6 +446,34 @@ its Makefile, for example:
 ```text
 vendor/bashdeps.bash sync --dest-root third_party dependencies.txt
 ```
+
+## Self-Hosting in This Repository
+
+The bashdeps source repository follows the same architecture without asking the
+unreleased source tree to bootstrap itself:
+
+```text
+bashdeps source tree
+  -> Make bootstraps and verifies released vendor/bashdeps.bash
+  -> released vendor/bashdeps.bash syncs dependencies.txt
+       -> vendor/doxygen-bash.awk
+  -> source tree builds/tests the next bashdeps revision
+```
+
+The Makefile currently pins released bashdeps v0.0.6 as the bootstrap tool.  The
+bootstrap is intentionally excluded from `dependencies.txt`.
+
+The only manifest-managed artifact in this repository is `bash-doxygen` v0.0.6,
+using an immutable tag URL and committed SHA-256 digest.  It is required only for
+reference documentation.  It is not a build or runtime dependency.
+
+Consequently, a clean `make build` succeeds without creating `vendor/`.
+`make all` explicitly runs dependency synchronization first and then builds, while
+`make deps-check` verifies existing bootstrap and manifest state without network
+repair.
+
+See ADR-017 for the self-hosting, trust, target, CI, release, and runtime isolation
+decisions.
 
 ## Build and Release Artifacts
 
@@ -473,6 +513,10 @@ generate a minified artifact.
 The same public behavior suite is run against maintained source and both generated
 Bash artifacts.
 
+Release artifact generation does not consume the documentation-only dependency
+manifest.  The released executables remain independent of `dependencies.txt`,
+`vendor/bashdeps.bash`, and `vendor/doxygen-bash.awk`.
+
 ## Development
 
 The project follows documentation-driven, test-second development.  Maintained
@@ -483,6 +527,8 @@ Common targets are:
 
 ```bash
 make all
+make deps
+make deps-check
 make build
 make check
 make format
@@ -490,11 +536,17 @@ make test
 make test-source
 make test-dev
 make test-dist
+make test-build-deps
 make docs
 make docs-clean
 make clean
 make distclean
 ```
+
+`make deps` may use the network to bootstrap the pinned released bashdeps tool and
+synchronize `dependencies.txt`.  `make deps-check` is the offline, non-repairing
+verification path.  `make build` does not acquire or verify development
+dependencies.
 
 Bats is the primary behavior-test framework.  Ordinary tests use controlled local
 fixtures rather than live public network services.
@@ -507,24 +559,27 @@ Doxygen reference documentation is generated from `src/bashdeps.bash` with:
 make docs
 ```
 
-Local documentation generation requires Doxygen.  The Make target downloads the
-`bash-doxygen` AWK filter into `vendor/doxygen-bash.awk` on first use and then
-writes the generated site under `doc/reference/`.
+Local documentation generation requires Doxygen.  `make docs` prepares the
+manifest-managed `vendor/doxygen-bash.awk` through `make deps`, applies the
+executable mode required by Doxygen, and writes the generated site under
+`doc/reference/`.
 
-Both the downloaded filter and generated reference directory are ignored by Git.
-Use `make docs-clean` to remove only generated reference documentation or
-`make distclean` to remove normal build output, reference documentation, and the
-downloaded filter.
+The released bootstrap, manifest-managed filter, and generated reference directory
+are generated state ignored by Git.  Use `make docs-clean` to remove only generated
+reference documentation or `make distclean` to remove normal build output,
+reference documentation, and the complete generated `vendor/` tree.
 
 Generated Doxygen output is not committed to this repository.  On pushes to
 `main`, `.github/workflows/static.yml` installs Doxygen, runs the same `make docs`
-target, and publishes `doc/reference/` to GitHub Pages at:
+target, verifies synchronized dependency state, and publishes `doc/reference/` to
+GitHub Pages at:
 
 ```text
 https://wesley-dean.github.io/bashdeps/
 ```
 
-See ADR-016 for the generation and publication decision.
+See ADR-016 for the Pages generation/publication decision and ADR-017 for the
+superseding dependency-acquisition boundary.
 
 ## Architecture
 
