@@ -447,6 +447,23 @@ its Makefile, for example:
 vendor/bashdeps.bash sync --dest-root third_party dependencies.txt
 ```
 
+### Multiple dependency manifests
+
+A consuming project may select different manifest files for different repository
+operations, such as build, documentation, or test dependencies.  This keeps
+artifact purpose in the consuming Makefile rather than adding dependency-type
+metadata to the bashdeps record grammar.
+
+For example, a project can use `dependencies.txt` for build inputs and
+`dependencies-docs.txt` for documentation-only tools, with corresponding
+`deps`/`deps-check` and `deps-docs`/`deps-docs-check` targets.  Projects with no
+ordinary build dependencies can keep `deps` as an explicit no-op while preparing
+role-specific dependencies only when those operations are requested.
+
+See [Multiple Dependency Manifests](doc/multiple-dependency-manifests.md) for
+complete Make examples, network/check boundaries, empty-build-dependency patterns,
+and cross-manifest destination considerations.
+
 ## Self-Hosting in This Repository
 
 The bashdeps source repository follows the same architecture without asking the
