@@ -571,9 +571,9 @@ generates exactly:
 dist/bashdeps.dev.bash
 dist/bashdeps.bash
 dist/bashdeps.min.bash
-dist/bashdeps.dev.bash.256
-dist/bashdeps.bash.256
-dist/bashdeps.min.bash.256
+dist/bashdeps.dev.bash.sha256
+dist/bashdeps.bash.sha256
+dist/bashdeps.min.bash.sha256
 ```
 
 `bashdeps.dev.bash` is the complete assembled developer artifact and retains
@@ -591,15 +591,27 @@ libraries incorporated into the generated program.
 All three Bash artifacts retain a valid shebang and executable mode and expose the
 same public CLI contract.
 
-Each Bash artifact SHALL have one matching `.256` checksum companion containing
+Each Bash artifact SHALL have one matching `.sha256` checksum companion containing
 the SHA-256 digest and artifact filename in conventional checksum-tool syntax.
 The normal artifact can therefore be checked from the distribution directory with:
 
 ```text
-sha256sum -c bashdeps.bash.256
+sha256sum -c bashdeps.bash.sha256
 ```
 
 or the supported `shasum` equivalent.
+
+New releases publish only `.sha256` checksum companions.  Historical releases
+that contain `.256` companions remain valid.  A consumer that explicitly
+retrieves release checksum sidecars MAY fall back from `<artifact>.sha256` to
+`<artifact>.256` only when the preferred asset is confirmed absent.  Transport,
+authorization, server, malformed-content, and checksum-verification failures SHALL
+remain failures rather than triggering legacy fallback.
+
+This sidecar naming compatibility does not change the dependency trust boundary.
+Manifest synchronization and bootstrap integrations continue to trust the
+SHA-256 digest committed by the consuming repository rather than dynamically
+replacing it with a value retrieved from a remote `.sha256` or `.256` file.
 
 No aggregate `SHA256SUMS` file is generated.
 
@@ -613,6 +625,8 @@ fresh checkout should use `make all` or run `make deps` before `make build`.
 
 The generated executables do not require Bash-Minifier, `dependencies.txt`, or the
 vendor tree at runtime.
+
+See ADR-019 for the checksum companion naming and compatibility decision.
 
 ## Consumer Make Integration
 
