@@ -516,9 +516,9 @@ files:
 dist/bashdeps.dev.bash
 dist/bashdeps.bash
 dist/bashdeps.min.bash
-dist/bashdeps.dev.bash.256
-dist/bashdeps.bash.256
-dist/bashdeps.min.bash.256
+dist/bashdeps.dev.bash.sha256
+dist/bashdeps.bash.sha256
+dist/bashdeps.min.bash.sha256
 ```
 
 `bashdeps.dev.bash` is the complete assembled developer artifact and retains
@@ -535,15 +535,27 @@ same transformations also apply to any libraries incorporated into the generated
 program rather than only to `src/bashdeps.bash`.
 
 All three Bash artifacts are executable and expose the same public CLI behavior.
-Each has one checksum companion whose filename is the artifact name plus `.256`.
-The checksum file uses conventional checksum-tool syntax, so from `dist/` the
-ordinary artifact can be verified with:
+Each has one checksum companion whose filename is the artifact name plus
+`.sha256`.  The checksum file uses conventional checksum-tool syntax, so from
+`dist/` the ordinary artifact can be verified with:
 
 ```bash
-sha256sum -c bashdeps.bash.256
+sha256sum -c bashdeps.bash.sha256
 ```
 
 or the supported `shasum` equivalent.
+
+New releases publish only `.sha256` checksum companions.  Historical releases
+that published `.256` companions remain unchanged.  A tool that explicitly
+retrieves release checksum sidecars may try `.256` only when the preferred
+`.sha256` asset is confirmed absent; transport, authorization, server,
+malformed-content, and checksum-mismatch failures should fail rather than trigger
+a legacy fallback.
+
+That compatibility rule does not change bashdeps' trust model.  Bashdeps itself
+continues to accept dependency bytes only when they match the SHA-256 digest
+committed in the consuming repository; it does not dynamically replace that
+trusted digest with a live `.sha256` or `.256` sidecar.
 
 This project does not generate an aggregate `SHA256SUMS` file.
 
@@ -554,6 +566,9 @@ Bash 4.3 compatibility, checksum, and public behavior tests pass.
 The build consumes `vendor/bash-minifier.bash`, but released executables remain
 independent of `dependencies.txt`, `vendor/bashdeps.bash`,
 `vendor/bash-minifier.bash`, and `vendor/doxygen-bash.awk` at runtime.
+
+See ADR-019 for the checksum companion naming and historical-read compatibility
+policy.
 
 ## Development
 
