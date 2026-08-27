@@ -197,9 +197,9 @@ run_make() {
   [ -x "$WORK/dist/bashdeps.dev.bash" ]
   [ -x "$WORK/dist/bashdeps.bash" ]
   [ -x "$WORK/dist/bashdeps.min.bash" ]
-  [ -f "$WORK/dist/bashdeps.dev.bash.256" ]
-  [ -f "$WORK/dist/bashdeps.bash.256" ]
-  [ -f "$WORK/dist/bashdeps.min.bash.256" ]
+  [ -f "$WORK/dist/bashdeps.dev.bash.sha256" ]
+  [ -f "$WORK/dist/bashdeps.bash.sha256" ]
+  [ -f "$WORK/dist/bashdeps.min.bash.sha256" ]
 }
 
 @test "distclean removes generated vendor and reference state" {
