@@ -48,6 +48,9 @@ check_status 0 "$status" 'version'
 capture_status status bash "$MANIFEST_MANAGER_EXECUTABLE" list --help
 check_status 0 "$status" 'list help'
 
+capture_status status bash "$MANIFEST_MANAGER_EXECUTABLE" add --help
+check_status 0 "$status" 'add help'
+
 capture_status status bash "$MANIFEST_MANAGER_EXECUTABLE" unknown
 check_status 2 "$status" 'unknown command'
 
@@ -80,6 +83,22 @@ fi
 check_status 0 "$status" 'list manifest identities'
 if [[ $(cat "$work/list-output") != 'acme/tool@v1' ]]; then
   printf 'FAIL: list did not emit the complete identity\n' >&2
+  failures=$((failures + 1))
+fi
+
+if bash "$MANIFEST_MANAGER_EXECUTABLE" add -f "$work/dependencies.txt" \
+  id=acme/other@v2 \
+  url=https://example.test/other \
+  dest=vendor/other \
+  "digest=sha256:$digest" >/dev/null 2>&1; then
+  status=0
+else
+  status=$?
+fi
+check_status 0 "$status" 'add explicit declaration'
+if ! grep -Fq 'id=acme/other@v2 url=https://example.test/other dest=vendor/other' \
+  "$work/dependencies.txt"; then
+  printf 'FAIL: add did not append the expected declaration\n' >&2
   failures=$((failures + 1))
 fi
 
