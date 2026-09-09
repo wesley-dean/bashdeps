@@ -7,10 +7,15 @@
 [![Documentation](https://github.com/wesley-dean/bashdeps/actions/workflows/static.yml/badge.svg)](https://github.com/wesley-dean/bashdeps/actions/workflows/static.yml)
 
 `bashdeps` is a small Bash tool for downloading, verifying, and materializing
-exact external artifacts declared by a repository.  The distributed executable is
+exact external artifacts declared by a repository.  The runtime executable is
 named `bashdeps.bash`.
 
-It is designed for projects that need a few pinned files without adopting a
+The repository also ships `manifest-manager.bash`, a separate maintainer-side CLI
+for preparing deliberate updates to existing bashdeps manifest declarations.  The
+two executables share repository governance and release versions, but they retain
+separate runtime responsibilities and source closures.
+
+Bashdeps is designed for projects that need a few pinned files without adopting a
 package manager or repeating download and checksum logic in every Makefile.
 
 A dependency can be a Bash library, script, template, data file, image, generated
@@ -32,7 +37,14 @@ bytes.  Existing files are hashed before reuse, downloaded candidates are hashed
 before publication, and successful synchronization ends by hashing final
 destinations again.
 
+`manifest-manager.bash` does not weaken that boundary.  It can discover a proposed
+GitHub release, retrieve candidate bytes, calculate a proposed digest, and update
+manifest source surgically.  The resulting source diff remains subject to normal
+review and commit before `bashdeps.bash` later treats it as approved input.
+
 ## Requirements
+
+### bashdeps.bash
 
 Runtime requirements are capability-based rather than distribution-based:
 
@@ -61,6 +73,19 @@ sha256sum -> shasum -a 256 -> failure
 
 A downloader is not needed for `verify` or when `install`/`sync` find that all
 required bytes already match.
+
+### manifest-manager.bash
+
+The manifest manager requires:
+
+- Bash 4.3 or newer;
+- `curl`;
+- `sha256sum` or `shasum -a 256`; and
+- ordinary Unix-like filesystem utilities used for staging and publication.
+
+It does not require the GitHub CLI (`gh`), `jq`, Git, Python, or `bashdeps.bash`.
+An omitted update version is resolved through GitHub's canonical
+`OWNER/REPO/releases/latest` redirect rather than through the GitHub JSON API.
 
 ## Manifest
 
@@ -139,13 +164,17 @@ field grammar instead of adopting indentation-sensitive or INI-style syntax.
 
 ### Identity
 
-`id` is opaque metadata to bashdeps.  The recommended convention is:
+`id` is opaque metadata to `bashdeps.bash`.  The recommended convention is:
 
 ```text
 PACKAGE@VERSION
 ```
 
 Bashdeps does not perform semantic-version resolution.
+
+The manifest manager interprets only the narrower GitHub-oriented identity shape
+needed for its maintenance operations.  That interpretation does not change the
+runtime manifest semantics.
 
 ### URL
 
@@ -308,6 +337,85 @@ bashdeps.bash verify --dest-root assets path/to/dependencies.txt
 succeeds only when every declared destination exists within the selected
 destination root and has the approved bytes.  Extra undeclared files are ignored.
 
+## Manifest Manager
+
+`manifest-manager.bash` updates existing GitHub-backed dependency declarations
+without making the runtime synchronizer responsible for release discovery or
+trust changes.
+
+Update one dependency to the repository's GitHub latest release:
+
+```bash
+manifest-manager.bash update wesley-dean/bash-doxygen
+```
+
+Update to an explicit tag exactly as supplied:
+
+```bash
+manifest-manager.bash update wesley-dean/bash-doxygen v0.0.14
+manifest-manager.bash update wesley-dean/bash-doxygen@v0.0.14
+```
+
+The literal tag `latest` is not special when supplied explicitly.  Omitting the
+version is what requests GitHub's canonical latest release.
+
+Update an alternate manifest:
+
+```bash
+manifest-manager.bash update \
+  --filename dependencies-docs.txt \
+  wesley-dean/bash-doxygen
+```
+
+Attempt a whole-manifest update transaction:
+
+```bash
+manifest-manager.bash update --all
+```
+
+`--all` does not silently skip commit-pinned or unsupported declarations.  If any
+dependency cannot be updated safely, the entire manifest update fails.
+
+### Transactional stdin/stdout mode
+
+A filename of `-` reads the complete manifest from standard input and writes one
+complete manifest representation to standard output:
+
+```bash
+manifest-manager.bash update -f - wesley-dean/bash-doxygen \
+  <dependencies.txt \
+  >dependencies.new.txt
+```
+
+After the complete input has been captured:
+
+```text
+success -> stdout is the complete updated manifest, status 0
+failure -> stdout is the complete original manifest, nonzero status
+```
+
+Diagnostics go to standard error.  Callers must inspect the exit status rather
+than treating the presence of output as proof that an update succeeded.
+
+### Surgical source preservation
+
+The manager parses a logical view for validation and dependency selection, but it
+does not regenerate the manifest from parsed fields.  It retains raw record bytes
+and changes only the intended `id`, `url`, and `digest` values for selected
+records.  `dest` is never changed by `update`.
+
+Successful updates preserve unrelated comments, whitespace, field order,
+continuations, blank lines, trailing whitespace, line endings, and final-newline
+state.  File-mode publication is staged and occurs only after the complete
+requested update has succeeded.
+
+The initial manager supports unambiguous GitHub raw-content and release-download
+URL forms.  It fails rather than guessing when the existing URL, identity, or
+artifact relationship cannot be established safely.
+
+See [Manifest Manager Behavior Specification](doc/manifest-manager-spec.md) and
+ADR-020 for the complete contract and rationale.
+
 ## File Modes
 
 Newly materialized artifacts use mode `0644`.
@@ -320,7 +428,7 @@ normalize its mode.  `verify` ignores mode entirely.
 
 ## Exit Statuses
 
-The public exit status contract is:
+The `bashdeps.bash` public exit status contract is:
 
 ```text
 0  success, help, or version output
@@ -332,15 +440,27 @@ The public exit status contract is:
 6  filesystem safety, staging, or publication failed
 ```
 
+The `manifest-manager.bash` public exit categories are:
+
+```text
+0  success, help, version, or successful no-op
+2  invalid CLI, manifest, dependency selection, or update declaration
+3  required runtime capability unavailable or unusable
+4  latest-release discovery or network acquisition failed
+5  exact-substitution or preservation safety check failed
+6  input, staging, filesystem, or publication failed
+```
+
 A malformed or unterminated continuation is status 2, including a blank/comment
 line where a trailing `\` requires immediate continued record content.
 
 An invalid `--dest-root` value or a destination outside the selected root is
-status 2 because it is invalid invocation/declaration policy rather than a
-publication failure.
+status 2 for `bashdeps.bash` because it is invalid invocation/declaration policy
+rather than a publication failure.
 
 Diagnostics are written to standard error.  Successful `install`, `sync`, and
-`verify` operations normally produce no standard output.
+`verify` operations normally produce no standard output.  Successful manager file
+updates are likewise quiet; stream mode reserves standard output for the manifest.
 
 ## Trust Boundary
 
@@ -352,6 +472,10 @@ The manifest itself is trusted source code.  A change that modifies both a URL
 and its approved digest intentionally changes which bytes the repository trusts
 and should receive the same review attention as other supply-chain-sensitive
 source changes.
+
+The manifest manager prepares such a source change but does not authorize it for
+runtime use.  Review and commit remain the trust boundary consumed later by
+`bashdeps.bash`.
 
 The default `vendor/` destination root limits where an ordinary manifest may
 materialize those trusted bytes.  A Makefile or CI change that supplies
@@ -475,7 +599,7 @@ bashdeps source tree
   -> released vendor/bashdeps.bash syncs dependencies.txt
        -> vendor/doxygen-bash.awk
        -> vendor/bash-minifier.bash
-  -> source tree builds/tests the next bashdeps revision
+  -> source tree builds/tests the next bashdeps and manifest-manager revision
 ```
 
 The Makefile currently pins released bashdeps v0.0.6 as the bootstrap tool.  The
@@ -492,25 +616,36 @@ bytes at `vendor/bash-minifier.bash`.  The build invokes that managed file throu
 `bash`, so dependency mode remains owned by bashdeps rather than inferred from its
 purpose.
 
-A clean `make build` now fails clearly until `vendor/bash-minifier.bash` has been
+A clean `make build` fails clearly until `vendor/bash-minifier.bash` has been
 prepared.  It does not download or repair the missing dependency.  `make all`
-explicitly runs dependency synchronization first and then builds, while
-`make deps-check` verifies existing bootstrap and manifest state without network
-repair.
+explicitly runs dependency synchronization first and then builds both executable
+families, while `make deps-check` verifies existing bootstrap and manifest state
+without network repair.
 
-See ADR-017 for the self-hosting and dependency-management architecture and
-ADR-018 for the superseding build-input and three-flavor release decisions.
+See ADR-017 for the self-hosting and dependency-management architecture, ADR-018
+for the build-input and three-flavor release decisions, and ADR-020 for the
+second-product release model.
 
 ## Build and Release Artifacts
 
-Maintained source lives at:
+Maintained product source lives at:
 
 ```text
 src/bashdeps.bash
+src/manifest-manager.bash
+lib/manifest-manager/state.bash
+lib/manifest-manager/manifest.bash
+lib/manifest-manager/github.bash
+lib/manifest-manager/update.bash
 ```
 
-After dependencies have been prepared, `make build` generates exactly six release
-files:
+The build uses explicit source inventories for each executable.  Code needed only
+by `manifest-manager.bash` is not incorporated into `bashdeps.bash`, and
+bashdeps-only runtime code is not incorporated into the manager.  A component may
+become shared only when both products genuinely require it.
+
+After dependencies have been prepared, `make build` generates exactly twelve
+release files:
 
 ```text
 dist/bashdeps.dev.bash
@@ -519,28 +654,38 @@ dist/bashdeps.min.bash
 dist/bashdeps.dev.bash.sha256
 dist/bashdeps.bash.sha256
 dist/bashdeps.min.bash.sha256
+
+dist/manifest-manager.dev.bash
+dist/manifest-manager.bash
+dist/manifest-manager.min.bash
+dist/manifest-manager.dev.bash.sha256
+dist/manifest-manager.bash.sha256
+dist/manifest-manager.min.bash.sha256
 ```
 
-`bashdeps.dev.bash` is the complete assembled developer artifact and retains
-source/documentation comments.
+For each product, the `.dev.bash` artifact is the complete assembled developer
+artifact and retains source/documentation comments.  The ordinary `.bash` artifact
+is derived from the complete developer artifact by removing full-line comments
+while retaining the shebang.  The `.min.bash` artifact is derived from the
+completed comment-stripped artifact through the commit-pinned Bash-Minifier
+dependency.
 
-`bashdeps.bash` remains the normal consumer artifact.  It is derived from the
-complete developer artifact by removing full-line comments while retaining the
-shebang.
+All six Bash artifacts are executable.  Each family exposes the same observable
+CLI behavior across its source, developer, ordinary, and minified representations.
+Each artifact has one checksum companion whose filename is the artifact name plus
+`.sha256`.
 
-`bashdeps.min.bash` is derived from the completed comment-stripped
-`bashdeps.bash` artifact through the commit-pinned Bash-Minifier dependency.
-Because stripping and minification occur after complete program assembly, the
-same transformations also apply to any libraries incorporated into the generated
-program rather than only to `src/bashdeps.bash`.
-
-All three Bash artifacts are executable and expose the same public CLI behavior.
-Each has one checksum companion whose filename is the artifact name plus
-`.sha256`.  The checksum file uses conventional checksum-tool syntax, so from
-`dist/` the ordinary artifact can be verified with:
+The checksum file uses conventional checksum-tool syntax, so from `dist/` the
+ordinary runtime artifact can be verified with:
 
 ```bash
 sha256sum -c bashdeps.bash.sha256
+```
+
+and the ordinary manifest-manager artifact with:
+
+```bash
+sha256sum -c manifest-manager.bash.sha256
 ```
 
 or the supported `shasum` equivalent.
@@ -552,29 +697,31 @@ retrieves release checksum sidecars may try `.256` only when the preferred
 malformed-content, and checksum-mismatch failures should fail rather than trigger
 a legacy fallback.
 
-That compatibility rule does not change bashdeps' trust model.  Bashdeps itself
+That compatibility rule does not change bashdeps' trust model.  `bashdeps.bash`
 continues to accept dependency bytes only when they match the SHA-256 digest
 committed in the consuming repository; it does not dynamically replace that
 trusted digest with a live `.sha256` or `.256` sidecar.
 
 This project does not generate an aggregate `SHA256SUMS` file.
 
-The same public behavior suite is run against maintained source and all three
-generated Bash artifacts.  The minified artifact is accepted only when syntax,
-Bash 4.3 compatibility, checksum, and public behavior tests pass.
+The public behavior suites are run against maintained source and all three
+generated representations for their respective products.  Minified artifacts are
+accepted only when syntax, Bash 4.3 compatibility, checksum, and public behavior
+tests pass.
 
 The build consumes `vendor/bash-minifier.bash`, but released executables remain
 independent of `dependencies.txt`, `vendor/bashdeps.bash`,
 `vendor/bash-minifier.bash`, and `vendor/doxygen-bash.awk` at runtime.
 
-See ADR-019 for the checksum companion naming and historical-read compatibility
-policy.
+See ADR-019 for checksum companion naming and ADR-020 for the two-product release
+and source-closure contract.
 
 ## Development
 
 The project follows documentation-driven, test-second development.  Maintained
-Bash source follows the documentation-first Doxygen-style standard defined by
-ADR-014 and derived from Bootstrap ADR-045.
+Bash source follows ADR-014.  New manifest-manager source follows the revised
+repository standard in `doc/documentation-standard.md`; existing scripts will be
+backported to that revised standard separately rather than as part of issue #16.
 
 Common targets are:
 
@@ -605,11 +752,14 @@ verify dependencies, but it requires the already-prepared
 run `make deps` before `make build`.
 
 Bats is the primary behavior-test framework.  Ordinary tests use controlled local
-fixtures rather than live public network services.
+fixtures rather than live public network services.  Both executable families are
+tested independently against maintained source and every generated release
+representation.
 
 ### Generate reference documentation
 
-Doxygen reference documentation is generated from `src/bashdeps.bash` with:
+Doxygen reference documentation is generated from the maintained Bash product
+source with:
 
 ```bash
 make docs
@@ -642,16 +792,22 @@ superseding dependency-acquisition boundary.
 
 Architecture Decision Records are stored in `doc/adr/`.
 
-The normative behavior specification is `doc/bashdeps-spec.md`.
+The normative behavior specifications are:
+
+```text
+doc/bashdeps-spec.md
+doc/manifest-manager-spec.md
+```
 
 AI-assisted contributors should review `AGENTS.md` before substantive changes.
 
 ## Public Interface
 
-The supported public interface is the `bashdeps.bash` executable CLI.
+The supported public interfaces are the `bashdeps.bash` and
+`manifest-manager.bash` executable CLIs.
 
-Bashdeps does not provide a supported sourceable library API in version 1.
-Private `__bashdeps_*` functions are implementation details.
+Neither product provides a supported sourceable library API.  Private
+`__bashdeps_*` and `__manifest_manager_*` functions are implementation details.
 
 ## License
 
@@ -660,4 +816,4 @@ See [LICENSE](LICENSE).
 ## Contributing
 
 Contributions are welcome.  Please read [CONTRIBUTING.md](CONTRIBUTING.md) and
-follow the documented architecture and public behavior contract.
+follow the documented architecture and public behavior contracts.
