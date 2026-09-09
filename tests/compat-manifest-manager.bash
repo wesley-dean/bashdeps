@@ -32,6 +32,12 @@ if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3))); 
   exit 1
 fi
 
+if ! bash -n "$MANIFEST_MANAGER_EXECUTABLE"; then
+  printf 'FAIL: Bash %s cannot parse %s\n' \
+    "$BASH_VERSION" "$MANIFEST_MANAGER_EXECUTABLE" >&2
+  exit 1
+fi
+
 status=0
 capture_status status bash "$MANIFEST_MANAGER_EXECUTABLE" --help
 check_status 0 "$status" 'help'
