@@ -4,15 +4,16 @@
 ## @brief Maintains and inspects bashdeps manifests through deliberate commands.
 ## @details
 ## `manifest-manager.bash` is a maintainer-side companion to `bashdeps.bash`. It
-## prepares deliberate source changes to existing dependency declarations and
-## provides validated read-only inspection without participating in runtime
-## artifact synchronization.
+## prepares deliberate source changes to dependency declarations and provides
+## validated read-only inspection without participating in runtime artifact
+## synchronization.
 ##
 ## The executable is intentionally separate from the bashdeps synchronization
 ## runtime.  It may discover GitHub's latest release and calculate proposed
-## trust data for `update`, while `bashdeps.bash` continues to consume only
-## already-reviewed manifest declarations.  The `list` command reads validated
-## complete identity values without reserializing manifest source.
+## trust data for `update`, while `add` requires complete declaration data from
+## the caller.  `bashdeps.bash` continues to consume only already-reviewed
+## manifest declarations.  The `list` command reads validated complete identity
+## values without reserializing manifest source.
 ##
 ## Maintained source loads manager-only implementation modules from
 ## `lib/manifest-manager/`.  Release assembly incorporates that explicit source
@@ -20,17 +21,18 @@
 ## import block.  No manager module is incorporated into `bashdeps.bash`.
 ## @note The public interface is this executable CLI.  Private functions
 ## beginning with `__manifest_manager_` are not a supported sourceable API.
-## @warning A successful update proposes new trusted bytes in repository source.
-## Review and commit of that source change remain the authorization boundary.
+## @warning Successful mutations propose new trusted manifest source.  Review
+## and commit of those source changes remain the authorization boundary.
 ## @see doc/manifest-manager-spec.md
 ## @see doc/adr/ADR-020-ship-manifest-manager-and-define-surgical-updates.md
 ## @see doc/adr/ADR-021-extend-manifest-manager-with-list-add-and-remove.md
 ## @par Examples
 ## @code
 ## manifest-manager.bash list
+## manifest-manager.bash add id=acme/tool@v1 \
+##   url=https://example.test/tool dest=vendor/tool \
+##   digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ## manifest-manager.bash update wesley-dean/bash-doxygen
-## manifest-manager.bash update -f - wesley-dean/bash-doxygen \
-##   v0.0.14 < dependencies.txt
 ## @endcode
 
 # BEGIN MANIFEST_MANAGER_SOURCE_IMPORTS
@@ -47,6 +49,8 @@ source "$__manifest_manager_source_root/lib/manifest-manager/transaction.bash"
 source "$__manifest_manager_source_root/lib/manifest-manager/update.bash"
 # shellcheck source=lib/manifest-manager/list.bash
 source "$__manifest_manager_source_root/lib/manifest-manager/list.bash"
+# shellcheck source=lib/manifest-manager/add.bash
+source "$__manifest_manager_source_root/lib/manifest-manager/add.bash"
 unset __manifest_manager_source_root
 # END MANIFEST_MANAGER_SOURCE_IMPORTS
 
@@ -65,8 +69,8 @@ __manifest_manager_build_commit=${__manifest_manager_build_commit:-unknown}
 ## @fn __manifest_manager_usage()
 ## @brief Writes the complete currently supported manager CLI surface to STDOUT.
 ## @details
-## Top-level help summarizes the implemented `update` and `list` commands and
-## directs callers to command-specific help for operation details.  Commands
+## Top-level help summarizes the implemented `update`, `list`, and `add` commands
+## and directs callers to command-specific help for operation details.  Commands
 ## defined by ADR-021 but not yet implemented are intentionally not advertised.
 ## @par STDIN
 ## Nothing is read from STDIN.
@@ -90,6 +94,7 @@ Usage:
 
 Commands:
   update    Update one or all existing GitHub-backed dependency declarations.
+  add       Append one complete explicit dependency declaration.
   list      List complete validated dependency identity values.
 
 Informational forms:
@@ -183,7 +188,7 @@ __manifest_manager_version_output() {
 ## @brief Tests whether update arguments request informational help output.
 ## @details
 ## This compatibility-local wrapper delegates to the shared command pre-scan so
-## update behavior remains unchanged while list and later commands use the same
+## update behavior remains unchanged while other commands use the same
 ## informational-option rule.
 ## @param args[] Arguments following the `update` subcommand.
 ## @par STDIN
@@ -231,7 +236,7 @@ __manifest_manager_update_has_version() {
 ## `-`.
 ## @details
 ## The wrapper retains the existing update runner contract while sharing stream
-## filename recognition with later manager commands.
+## filename recognition with other manager commands.
 ## @param args[] Arguments following the `update` subcommand.
 ## @par STDIN
 ## Nothing is read from STDIN.
@@ -356,16 +361,16 @@ __manifest_manager_run_update() {
 ## @fn __manifest_manager_main()
 ## @brief Dispatches the public manifest-manager command-line interface.
 ## @details
-## Top-level help/version forms succeed without manifest input.  `update`
-## delegates to the transactional mutation runner and `list` delegates to its
-## read-only validated identity runner.  Unknown or missing commands fail with
-## status 2 and a concise diagnostic.
+## Top-level help/version forms succeed without manifest input.  `update` and
+## `add` delegate to transactional mutation runners, while `list` delegates to
+## its read-only validated identity runner.  Unknown or missing commands fail
+## with status 2 and a concise diagnostic.
 ## @param args[] Public command arguments excluding the executable name.
 ## @par STDIN
-## Depends on the selected command; `update -f -` and `list -f -` consume a
-## manifest stream.
+## Depends on the selected command; mutating `-f -` forms and `list -f -`
+## consume a manifest stream.
 ## @par STDOUT
-## Help/version text, list output, or a transactional update stream when
+## Help/version text, list output, or a transactional manifest stream when
 ## selected.
 ## @par STDERR
 ## A diagnostic is written for unknown or missing commands and operational
@@ -378,6 +383,8 @@ __manifest_manager_run_update() {
 ## @par Examples
 ## @code
 ## __manifest_manager_main list
+## __manifest_manager_main add id=tool@1 url=https://example.test/tool \
+##   dest=vendor/tool digest=sha256:0123...
 ## __manifest_manager_main update owner/repo v1.2.3
 ## @endcode
 __manifest_manager_main() {
@@ -393,6 +400,10 @@ __manifest_manager_main() {
     update)
       shift
       __manifest_manager_run_update "$@"
+      ;;
+    add)
+      shift
+      __manifest_manager_run_add "$@"
       ;;
     list)
       shift
