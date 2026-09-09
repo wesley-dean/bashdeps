@@ -51,6 +51,9 @@ check_status 0 "$status" 'list help'
 capture_status status bash "$MANIFEST_MANAGER_EXECUTABLE" add --help
 check_status 0 "$status" 'add help'
 
+capture_status status bash "$MANIFEST_MANAGER_EXECUTABLE" remove --help
+check_status 0 "$status" 'remove help'
+
 capture_status status bash "$MANIFEST_MANAGER_EXECUTABLE" unknown
 check_status 2 "$status" 'unknown command'
 
@@ -99,6 +102,22 @@ check_status 0 "$status" 'add explicit declaration'
 if ! grep -Fq 'id=acme/other@v2 url=https://example.test/other dest=vendor/other' \
   "$work/dependencies.txt"; then
   printf 'FAIL: add did not append the expected declaration\n' >&2
+  failures=$((failures + 1))
+fi
+
+if bash "$MANIFEST_MANAGER_EXECUTABLE" remove -f "$work/dependencies.txt" \
+  acme/tool@v1 >/dev/null 2>&1; then
+  status=0
+else
+  status=$?
+fi
+check_status 0 "$status" 'remove exact declaration'
+if grep -Fq 'id=acme/tool@v1 ' "$work/dependencies.txt"; then
+  printf 'FAIL: remove left the selected declaration in the manifest\n' >&2
+  failures=$((failures + 1))
+fi
+if ! grep -Fq 'id=acme/other@v2 ' "$work/dependencies.txt"; then
+  printf 'FAIL: remove did not preserve the unrelated declaration\n' >&2
   failures=$((failures + 1))
 fi
 
