@@ -196,3 +196,14 @@ captured input.  Each product receives developer, ordinary, and minified artifac
 plus `.sha256` companions, bringing releases to twelve files without importing
 manager-only code into bashdeps.  See
 [ADR-020](adr/ADR-020-ship-manifest-manager-and-define-surgical-updates.md).
+
+## ADR-021: Extend Manifest Manager with List, Add, and Remove
+
+The manager grows as a conservative source-maintenance CLI with provider-neutral
+`list`, explicit-field `add`, and exact-identity `remove` contracts while leaving
+`bashdeps.bash` unchanged.  `list` emits complete validated `id` values in manifest
+order; future add/remove mutations preserve unrelated source bytes and use
+operation-specific proofs rather than parse-and-reserialize behavior.  Comments are
+not implicitly owned by adjacent records, and add does not infer URLs,
+destinations, artifact names, or digests.  See
+[ADR-021](adr/ADR-021-extend-manifest-manager-with-list-add-and-remove.md).

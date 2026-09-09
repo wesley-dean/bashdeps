@@ -370,6 +370,7 @@ __manifest_manager_parse_manifest() {
   local __mm_line __mm_semantic __mm_fragment __mm_raw_line
   local __mm_raw_record='' __mm_logical='' __mm_had_newline
   local __mm_continuing=0 __mm_line_continues __mm_record_index
+  local __mm_record_status
 
   __manifest_manager_assert_lossless_text "$__mm_source" || return $?
   __manifest_manager_reset_manifest_state
@@ -447,8 +448,9 @@ __manifest_manager_parse_manifest() {
 
     __mm_continuing=0
     __manifest_manager_parse_record "$__mm_logical" || {
+      __mm_record_status=$?
       exec 3<&-
-      return $?
+      return "$__mm_record_status"
     }
     __mm_record_index=$((${#__manifest_manager_ids[@]} - 1))
     __manifest_manager_raw_records+=("$__mm_raw_record")

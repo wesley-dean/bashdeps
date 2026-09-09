@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
 ## @file src/manifest-manager.bash
-## @brief Maintains existing bashdeps manifests through transactional updates.
+## @brief Maintains and inspects bashdeps manifests through deliberate commands.
 ## @details
 ## `manifest-manager.bash` is a maintainer-side companion to `bashdeps.bash`. It
-## prepares deliberate source changes to existing dependency declarations by
-## coordinating an identity tag, immutable GitHub artifact URL, and SHA-256
-## digest while preserving every unrelated manifest byte.
+## prepares deliberate source changes to existing dependency declarations and
+## provides validated read-only inspection without participating in runtime
+## artifact synchronization.
 ##
 ## The executable is intentionally separate from the bashdeps synchronization
 ## runtime.  It may discover GitHub's latest release and calculate proposed
-## trust data, while `bashdeps.bash` continues to consume only already-reviewed
-## manifest declarations.  The initial public mutation subcommand is `update`.
+## trust data for `update`, while `bashdeps.bash` continues to consume only
+## already-reviewed manifest declarations.  The `list` command reads validated
+## complete identity values without reserializing manifest source.
 ##
 ## Maintained source loads manager-only implementation modules from
 ## `lib/manifest-manager/`.  Release assembly incorporates that explicit source
@@ -23,8 +24,10 @@
 ## Review and commit of that source change remain the authorization boundary.
 ## @see doc/manifest-manager-spec.md
 ## @see doc/adr/ADR-020-ship-manifest-manager-and-define-surgical-updates.md
+## @see doc/adr/ADR-021-extend-manifest-manager-with-list-add-and-remove.md
 ## @par Examples
 ## @code
+## manifest-manager.bash list
 ## manifest-manager.bash update wesley-dean/bash-doxygen
 ## manifest-manager.bash update -f - wesley-dean/bash-doxygen \
 ##   v0.0.14 < dependencies.txt
@@ -38,8 +41,12 @@ source "$__manifest_manager_source_root/lib/manifest-manager/state.bash"
 source "$__manifest_manager_source_root/lib/manifest-manager/manifest.bash"
 # shellcheck source=lib/manifest-manager/github.bash
 source "$__manifest_manager_source_root/lib/manifest-manager/github.bash"
+# shellcheck source=lib/manifest-manager/transaction.bash
+source "$__manifest_manager_source_root/lib/manifest-manager/transaction.bash"
 # shellcheck source=lib/manifest-manager/update.bash
 source "$__manifest_manager_source_root/lib/manifest-manager/update.bash"
+# shellcheck source=lib/manifest-manager/list.bash
+source "$__manifest_manager_source_root/lib/manifest-manager/list.bash"
 unset __manifest_manager_source_root
 # END MANIFEST_MANAGER_SOURCE_IMPORTS
 
@@ -56,12 +63,11 @@ __manifest_manager_build_date=${__manifest_manager_build_date:-unknown}
 __manifest_manager_build_commit=${__manifest_manager_build_commit:-unknown}
 
 ## @fn __manifest_manager_usage()
-## @brief Writes the complete supported manifest-manager CLI surface to STDOUT.
+## @brief Writes the complete currently supported manager CLI surface to STDOUT.
 ## @details
-## Help documents the `update` forms, option meanings, omitted-version behavior,
-## transactional stream rollback rule, and stable public exit categories.  The
-## function is used only for explicit help so operational diagnostics can remain
-## confined to STDERR.
+## Top-level help summarizes the implemented `update` and `list` commands and
+## directs callers to command-specific help for operation details.  Commands
+## defined by ADR-021 but not yet implemented are intentionally not advertised.
 ## @par STDIN
 ## Nothing is read from STDIN.
 ## @par STDOUT
@@ -70,8 +76,7 @@ __manifest_manager_build_commit=${__manifest_manager_build_commit:-unknown}
 ## Nothing is intentionally written to STDERR.
 ## @returns Multi-line human-readable help text.
 ## @retval 0 Help text was written successfully.
-## @note A non-zero `printf` status may be propagated if STDOUT cannot be
-## written.
+## @note A non-zero output status may be propagated if STDOUT cannot be written.
 ## @par Examples
 ## @code
 ## __manifest_manager_usage
@@ -79,13 +84,49 @@ __manifest_manager_build_commit=${__manifest_manager_build_commit:-unknown}
 __manifest_manager_usage() {
   cat <<'USAGE'
 Usage:
-  manifest-manager.bash update [OPTIONS] ID [VERSION]
-  manifest-manager.bash update [OPTIONS] ID@VERSION
-  manifest-manager.bash update [OPTIONS] --all
+  manifest-manager.bash COMMAND [OPTIONS]
   manifest-manager.bash help
   manifest-manager.bash version
 
-Update options:
+Commands:
+  update    Update one or all existing GitHub-backed dependency declarations.
+  list      List complete validated dependency identity values.
+
+Informational forms:
+  -h, --help             Show this help and exit successfully.
+  -V, --version          Show version/build information and exit successfully.
+
+Use 'manifest-manager.bash COMMAND --help' for command-specific syntax,
+file/stream behavior, output, and exit statuses.
+USAGE
+}
+
+## @fn __manifest_manager_update_usage()
+## @brief Writes complete public help for the `update` subcommand.
+## @details
+## Update help documents positional forms, option meanings, omitted-version
+## behavior, transactional stream rollback, and relevant public exit categories.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Human-readable `update` help is written.
+## @par STDERR
+## Nothing is intentionally written to STDERR.
+## @returns Multi-line human-readable help text.
+## @retval 0 Help text was written successfully.
+## @note A non-zero output status may be propagated if STDOUT cannot be written.
+## @par Examples
+## @code
+## __manifest_manager_update_usage
+## @endcode
+__manifest_manager_update_usage() {
+  cat <<'USAGE'
+Usage:
+  manifest-manager.bash update [OPTIONS] ID [VERSION]
+  manifest-manager.bash update [OPTIONS] ID@VERSION
+  manifest-manager.bash update [OPTIONS] --all
+
+Options:
   -a, --all              Update every declared dependency to its GitHub latest release.
   -f, --filename FILE    Select a manifest; FILE '-' reads STDIN and writes STDOUT.
   -h, --help             Show this help and exit successfully.
@@ -141,8 +182,9 @@ __manifest_manager_version_output() {
 ## @fn __manifest_manager_update_has_help()
 ## @brief Tests whether update arguments request informational help output.
 ## @details
-## Help is recognized before stream capture so `update -f - --help` does not
-## consume STDIN merely because a stream filename is also present.
+## This compatibility-local wrapper delegates to the shared command pre-scan so
+## update behavior remains unchanged while list and later commands use the same
+## informational-option rule.
 ## @param args[] Arguments following the `update` subcommand.
 ## @par STDIN
 ## Nothing is read from STDIN.
@@ -155,21 +197,17 @@ __manifest_manager_version_output() {
 ## @retval 1 No update help option is present.
 ## @par Examples
 ## @code
-## if __manifest_manager_update_has_help "$@"; then __manifest_manager_usage; fi
+## __manifest_manager_update_has_help "$@"
 ## @endcode
 __manifest_manager_update_has_help() {
-  local __mm_arg
-  for __mm_arg in "$@"; do
-    [[ $__mm_arg == -h || $__mm_arg == --help ]] && return 0
-  done
-  return 1
+  __manifest_manager_args_have_help "$@"
 }
 
 ## @fn __manifest_manager_update_has_version()
 ## @brief Tests whether update arguments request informational version output.
 ## @details
-## Version is recognized before stream capture for the same reason as help:
-## informational operations do not consume STDIN even if `-f -` is also present.
+## This wrapper preserves the established update call structure while delegating
+## detection to the command-agnostic helper introduced for the expanded CLI.
 ## @param args[] Arguments following the `update` subcommand.
 ## @par STDIN
 ## Nothing is read from STDIN.
@@ -182,26 +220,18 @@ __manifest_manager_update_has_help() {
 ## @retval 1 No update version option is present.
 ## @par Examples
 ## @code
-## if __manifest_manager_update_has_version "$@"; then \
-##   __manifest_manager_version_output
-## fi
+## __manifest_manager_update_has_version "$@"
 ## @endcode
 __manifest_manager_update_has_version() {
-  local __mm_arg
-  for __mm_arg in "$@"; do
-    [[ $__mm_arg == -V || $__mm_arg == --version ]] && return 0
-  done
-  return 1
+  __manifest_manager_args_have_version "$@"
 }
 
 ## @fn __manifest_manager_update_has_stream_hint()
 ## @brief Detects whether raw update arguments unambiguously request filename
 ## `-`.
 ## @details
-## Stream rollback applies to CLI errors when stream mode can already be
-## recognized. The pre-scan therefore understands `-f -`, `--filename -`, and
-## `--filename=-` before full option validation.  Other malformed combinations
-## are left to the normal CLI parser.
+## The wrapper retains the existing update runner contract while sharing stream
+## filename recognition with later manager commands.
 ## @param args[] Arguments following the `update` subcommand.
 ## @par STDIN
 ## Nothing is read from STDIN.
@@ -217,16 +247,7 @@ __manifest_manager_update_has_version() {
 ## __manifest_manager_update_has_stream_hint -f - owner/repo
 ## @endcode
 __manifest_manager_update_has_stream_hint() {
-  local __mm_previous='' __mm_arg
-
-  for __mm_arg in "$@"; do
-    if [[ ($__mm_previous == -f || $__mm_previous == --filename) && $__mm_arg == - ]]; then
-      return 0
-    fi
-    [[ $__mm_arg == --filename=- ]] && return 0
-    __mm_previous=$__mm_arg
-  done
-  return 1
+  __manifest_manager_args_have_stream_filename "$@"
 }
 
 ## @fn __manifest_manager_run_update()
@@ -261,7 +282,7 @@ __manifest_manager_run_update() {
   local __mm_status=0 __mm_stream_hint=0
 
   if __manifest_manager_update_has_help "$@"; then
-    __manifest_manager_usage
+    __manifest_manager_update_usage
     return $?
   fi
   if __manifest_manager_update_has_version "$@"; then
@@ -336,26 +357,27 @@ __manifest_manager_run_update() {
 ## @brief Dispatches the public manifest-manager command-line interface.
 ## @details
 ## Top-level help/version forms succeed without manifest input.  `update`
-## delegates to the transactional update runner.  Unknown or missing commands
-## fail with status 2 and a concise diagnostic.  This function does not expose
-## private Bash helpers as a supported API merely because maintained source can
-## be sourced.
+## delegates to the transactional mutation runner and `list` delegates to its
+## read-only validated identity runner.  Unknown or missing commands fail with
+## status 2 and a concise diagnostic.
 ## @param args[] Public command arguments excluding the executable name.
 ## @par STDIN
-## Depends on the selected command; only `update -f -` consumes a manifest
-## stream.
+## Depends on the selected command; `update -f -` and `list -f -` consume a
+## manifest stream.
 ## @par STDOUT
-## Help/version text or a transactional manifest stream when selected.
+## Help/version text, list output, or a transactional update stream when
+## selected.
 ## @par STDERR
 ## A diagnostic is written for unknown or missing commands and operational
 ## errors.
 ## @returns Command-specific public output.
 ## @retval 0 The selected command succeeded.
 ## @retval 2 The public command name or invocation was invalid.
-## @note Other documented public update statuses from 3 through 6 are
-## propagated.
+## @note Other documented public command statuses from 3 through 6 are
+## propagated when relevant.
 ## @par Examples
 ## @code
+## __manifest_manager_main list
 ## __manifest_manager_main update owner/repo v1.2.3
 ## @endcode
 __manifest_manager_main() {
@@ -371,6 +393,10 @@ __manifest_manager_main() {
     update)
       shift
       __manifest_manager_run_update "$@"
+      ;;
+    list)
+      shift
+      __manifest_manager_run_list "$@"
       ;;
     '')
       __manifest_manager_diag 'a command is required'
