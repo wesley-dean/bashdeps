@@ -114,7 +114,6 @@ setup() {
     "$digest" >dependencies.txt
   printf 'id=acme/two@v2 url=https://example.test/two dest=vendor/two digest=sha256:%s' \
     "$digest" >>dependencies.txt
-  tail -n 1 dependencies.txt >expected-last || true
   printf 'id=acme/two@v2 url=https://example.test/two dest=vendor/two digest=sha256:%s' \
     "$digest" >expected-last
 
