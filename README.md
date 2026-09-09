@@ -11,9 +11,9 @@ exact external artifacts declared by a repository.  The runtime executable is
 named `bashdeps.bash`.
 
 The repository also ships `manifest-manager.bash`, a separate maintainer-side CLI
-for preparing deliberate updates to existing bashdeps manifest declarations.  The
-two executables share repository governance and release versions, but they retain
-separate runtime responsibilities and source closures.
+for inspecting and preparing deliberate changes to bashdeps manifest declarations.
+The two executables share repository governance and release versions, but they
+retain separate runtime responsibilities and source closures.
 
 Bashdeps is designed for projects that need a few pinned files without adopting a
 package manager or repeating download and checksum logic in every Makefile.
@@ -37,10 +37,12 @@ bytes.  Existing files are hashed before reuse, downloaded candidates are hashed
 before publication, and successful synchronization ends by hashing final
 destinations again.
 
-`manifest-manager.bash` does not weaken that boundary.  It can discover a proposed
-GitHub release, retrieve candidate bytes, calculate a proposed digest, and update
-manifest source surgically.  The resulting source diff remains subject to normal
-review and commit before `bashdeps.bash` later treats it as approved input.
+`manifest-manager.bash` does not weaken that boundary.  Its `list` command can
+inspect validated complete identities without changing source.  Its `update`
+command can discover a proposed GitHub release, retrieve candidate bytes,
+calculate a proposed digest, and update manifest source surgically.  Resulting
+source changes remain subject to normal review and commit before `bashdeps.bash`
+later treats them as approved input.
 
 ## Requirements
 
@@ -76,12 +78,13 @@ required bytes already match.
 
 ### manifest-manager.bash
 
-The manifest manager requires:
+The manifest manager requires Bash 4.3 or newer and ordinary Unix-like filesystem
+utilities used for staging and publication.  Additional capabilities are
+command-specific:
 
-- Bash 4.3 or newer;
-- `curl`;
-- `sha256sum` or `shasum -a 256`; and
-- ordinary Unix-like filesystem utilities used for staging and publication.
+- `list` requires no network client or SHA-256 command;
+- `update` requires `curl` and `sha256sum` or `shasum -a 256` when release
+  discovery, artifact retrieval, or hashing is required.
 
 It does not require the GitHub CLI (`gh`), `jq`, Git, Python, or `bashdeps.bash`.
 An omitted update version is resolved through GitHub's canonical
@@ -172,9 +175,10 @@ PACKAGE@VERSION
 
 Bashdeps does not perform semantic-version resolution.
 
-The manifest manager interprets only the narrower GitHub-oriented identity shape
-needed for its maintenance operations.  That interpretation does not change the
-runtime manifest semantics.
+The manifest manager preserves that opacity for read-only `list` output.  The
+`update` command interprets only the narrower GitHub-oriented identity shape it
+needs for release maintenance.  Neither behavior changes runtime manifest
+semantics.
 
 ### URL
 
@@ -339,9 +343,35 @@ destination root and has the approved bytes.  Extra undeclared files are ignored
 
 ## Manifest Manager
 
-`manifest-manager.bash` updates existing GitHub-backed dependency declarations
-without making the runtime synchronizer responsible for release discovery or
-trust changes.
+`manifest-manager.bash` provides conservative maintainer operations over manifest
+source without making the runtime synchronizer responsible for release discovery
+or trust changes.
+
+### List dependency identities
+
+List complete validated identity values from the default manifest:
+
+```bash
+manifest-manager.bash list
+```
+
+Use an alternate manifest or read a manifest from standard input:
+
+```bash
+manifest-manager.bash list --filename dependencies-docs.txt
+manifest-manager.bash list -f - <dependencies.txt
+```
+
+`list` validates the complete manifest before writing output, then emits each full
+logical `id` value on its own line in manifest order.  It does not strip version
+text or reinterpret the identity as a GitHub package name.  A valid empty manifest
+produces no output and succeeds.
+
+`list -f -` is read-only stream input.  On failure it does not echo the original
+manifest to STDOUT; STDOUT belongs to list data.  This differs deliberately from
+the transactional rollback contract used by mutating stream commands.
+
+### Update existing declarations
 
 Update one dependency to the repository's GitHub latest release:
 
@@ -376,10 +406,10 @@ manifest-manager.bash update --all
 `--all` does not silently skip commit-pinned or unsupported declarations.  If any
 dependency cannot be updated safely, the entire manifest update fails.
 
-### Transactional stdin/stdout mode
+### Transactional update stdin/stdout mode
 
-A filename of `-` reads the complete manifest from standard input and writes one
-complete manifest representation to standard output:
+For `update`, a filename of `-` reads the complete manifest from standard input
+and writes one complete manifest representation to standard output:
 
 ```bash
 manifest-manager.bash update -f - wesley-dean/bash-doxygen \
@@ -401,7 +431,7 @@ than treating the presence of output as proof that an update succeeded.
 
 The manager parses a logical view for validation and dependency selection, but it
 does not regenerate the manifest from parsed fields.  It retains raw record bytes
-and changes only the intended `id`, `url`, and `digest` values for selected
+and changes only the intended `id`, `url`, and `digest` values for selected update
 records.  `dest` is never changed by `update`.
 
 Successful updates preserve unrelated comments, whitespace, field order,
@@ -409,12 +439,15 @@ continuations, blank lines, trailing whitespace, line endings, and final-newline
 state.  File-mode publication is staged and occurs only after the complete
 requested update has succeeded.
 
-The initial manager supports unambiguous GitHub raw-content and release-download
-URL forms.  It fails rather than guessing when the existing URL, identity, or
-artifact relationship cannot be established safely.
+The current update command supports unambiguous GitHub raw-content and
+release-download URL forms.  It fails rather than guessing when the existing URL,
+identity, or artifact relationship cannot be established safely.
 
-See [Manifest Manager Behavior Specification](doc/manifest-manager-spec.md) and
-ADR-020 for the complete contract and rationale.
+ADR-021 defines future explicit `add` and exact-identity `remove` contracts.  They
+are not advertised as implemented commands until their corresponding phases land.
+
+See [Manifest Manager Behavior Specification](doc/manifest-manager-spec.md),
+ADR-020, and ADR-021 for the complete contracts and rationale.
 
 ## File Modes
 
@@ -444,12 +477,15 @@ The `manifest-manager.bash` public exit categories are:
 
 ```text
 0  success, help, version, or successful no-op
-2  invalid CLI, manifest, dependency selection, or update declaration
+2  invalid CLI, manifest, dependency selection, or declaration
 3  required runtime capability unavailable or unusable
 4  latest-release discovery or network acquisition failed
-5  exact-substitution or preservation safety check failed
-6  input, staging, filesystem, or publication failed
+5  exact-mutation or preservation safety check failed
+6  input, staging, filesystem, output, or publication failed
 ```
+
+Commands use only relevant categories.  In particular, `list` normally uses 0,
+2, and 6 and does not require network or hashing capabilities.
 
 A malformed or unterminated continuation is status 2, including a blank/comment
 line where a trailing `\` requires immediate continued record content.
@@ -459,8 +495,9 @@ status 2 for `bashdeps.bash` because it is invalid invocation/declaration policy
 rather than a publication failure.
 
 Diagnostics are written to standard error.  Successful `install`, `sync`, and
-`verify` operations normally produce no standard output.  Successful manager file
-updates are likewise quiet; stream mode reserves standard output for the manifest.
+`verify` operations normally produce no standard output.  Successful manager
+update file operations are likewise quiet; update stream mode reserves standard
+output for the manifest, while `list` reserves it for identity values.
 
 ## Trust Boundary
 
@@ -636,7 +673,9 @@ src/manifest-manager.bash
 lib/manifest-manager/state.bash
 lib/manifest-manager/manifest.bash
 lib/manifest-manager/github.bash
+lib/manifest-manager/transaction.bash
 lib/manifest-manager/update.bash
+lib/manifest-manager/list.bash
 ```
 
 The build uses explicit source inventories for each executable.  Code needed only
@@ -721,7 +760,7 @@ and source-closure contract.
 The project follows documentation-driven, test-second development.  Maintained
 Bash source follows ADR-014.  New manifest-manager source follows the revised
 repository standard in `doc/documentation-standard.md`; existing scripts will be
-backported to that revised standard separately rather than as part of issue #16.
+backported to that revised standard separately rather than as part of issue #17.
 
 Common targets are:
 
