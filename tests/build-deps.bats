@@ -3,9 +3,11 @@
 setup() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd -P)"
   WORK="$BATS_TEST_TMPDIR/work"
-  mkdir -p "$WORK/src" "$WORK/mock-bin"
+  mkdir -p "$WORK/src" "$WORK/lib/manifest-manager" "$WORK/mock-bin"
   cp "$REPO_ROOT/Makefile" "$WORK/Makefile"
   cp "$REPO_ROOT/src/bashdeps.bash" "$WORK/src/bashdeps.bash"
+  cp "$REPO_ROOT/src/manifest-manager.bash" "$WORK/src/manifest-manager.bash"
+  cp "$REPO_ROOT"/lib/manifest-manager/*.bash "$WORK/lib/manifest-manager/"
   cp "$REPO_ROOT/dependencies.txt" "$WORK/dependencies.txt"
 
   printf '%s\n' 'managed documentation filter bytes' >"$WORK/managed-filter-source"
@@ -174,7 +176,7 @@ run_make() {
   [ ! -e "$WORK/vendor/bashdeps.bash.tmp" ]
 }
 
-@test "prepared build remains network-free" {
+@test "prepared build remains network-free and produces both product families" {
   run run_make deps
   [ "$status" -eq 0 ]
 
@@ -183,9 +185,20 @@ run_make() {
 
   [ "$status" -eq 0 ]
   [ ! -e "$WORK/curl-called" ]
-  [ -x "$WORK/dist/bashdeps.dev.bash" ]
-  [ -x "$WORK/dist/bashdeps.bash" ]
-  [ -x "$WORK/dist/bashdeps.min.bash" ]
+  for artifact in \
+    bashdeps.dev.bash bashdeps.bash bashdeps.min.bash \
+    manifest-manager.dev.bash manifest-manager.bash manifest-manager.min.bash; do
+    [ -x "$WORK/dist/$artifact" ]
+    [ -f "$WORK/dist/$artifact.sha256" ]
+  done
+}
+
+@test "build keeps product-specific private code out of the other executable" {
+  run run_make all VERSION=0.0.0-test
+  [ "$status" -eq 0 ]
+
+  ! grep -q '__manifest_manager_' "$WORK/dist/bashdeps.dev.bash"
+  ! grep -q '__bashdeps_' "$WORK/dist/manifest-manager.dev.bash"
 }
 
 @test "all synchronizes dependencies before building all release flavors" {
@@ -194,12 +207,12 @@ run_make() {
   [ "$status" -eq 0 ]
   cmp -s "$WORK/managed-filter-source" "$WORK/vendor/doxygen-bash.awk"
   cmp -s "$WORK/managed-minifier-source" "$WORK/vendor/bash-minifier.bash"
-  [ -x "$WORK/dist/bashdeps.dev.bash" ]
-  [ -x "$WORK/dist/bashdeps.bash" ]
-  [ -x "$WORK/dist/bashdeps.min.bash" ]
-  [ -f "$WORK/dist/bashdeps.dev.bash.sha256" ]
-  [ -f "$WORK/dist/bashdeps.bash.sha256" ]
-  [ -f "$WORK/dist/bashdeps.min.bash.sha256" ]
+  for artifact in \
+    bashdeps.dev.bash bashdeps.bash bashdeps.min.bash \
+    manifest-manager.dev.bash manifest-manager.bash manifest-manager.min.bash; do
+    [ -x "$WORK/dist/$artifact" ]
+    [ -f "$WORK/dist/$artifact.sha256" ]
+  done
 }
 
 @test "distclean removes generated vendor and reference state" {
@@ -209,7 +222,7 @@ run_make() {
   : >"$WORK/vendor/bash-minifier.bash"
   : >"$WORK/doc/reference/index.html"
   : >"$WORK/dist/bashdeps.bash"
-  : >"$WORK/dist/bashdeps.min.bash"
+  : >"$WORK/dist/manifest-manager.bash"
 
   run make -C "$WORK" distclean
 
@@ -229,5 +242,12 @@ run_make() {
     run "$WORK/dist/$artifact" --version
     [ "$status" -eq 0 ]
     [[ "$output" == bashdeps.bash\ * ]]
+  done
+
+  for artifact in \
+    manifest-manager.dev.bash manifest-manager.bash manifest-manager.min.bash; do
+    run "$WORK/dist/$artifact" --version
+    [ "$status" -eq 0 ]
+    [[ "$output" == manifest-manager.bash\ * ]]
   done
 }

@@ -1,11 +1,11 @@
 # Doxyfile
 #
-# Doxygen configuration for the bashdeps Bash source.  The Makefile docs target
+# Doxygen configuration for the maintained Bash source.  The Makefile docs target
 # prepares the manifest-managed Bash preprocessor filter before invoking this
 # configuration.
 
 PROJECT_NAME           = "bashdeps"
-PROJECT_BRIEF          = "Exact SHA-256-pinned Bash dependency materialization tool"
+PROJECT_BRIEF          = "Exact dependency materialization and manifest maintenance tools"
 
 OUTPUT_DIRECTORY       = doc/reference
 CREATE_SUBDIRS         = NO
@@ -17,7 +17,12 @@ GENERATE_MAN           = NO
 GENERATE_RTF           = NO
 GENERATE_XML           = NO
 
-INPUT                  = src/bashdeps.bash
+INPUT                  = src/bashdeps.bash \
+                         src/manifest-manager.bash \
+                         lib/manifest-manager/state.bash \
+                         lib/manifest-manager/manifest.bash \
+                         lib/manifest-manager/github.bash \
+                         lib/manifest-manager/update.bash
 RECURSIVE              = NO
 FILE_PATTERNS          = *.bash
 

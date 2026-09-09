@@ -61,6 +61,13 @@ CLEAR_REPORT_FOLDER: true
 # non-executable bash files
 BASH_EXEC_FILTER_REGEX_EXCLUDE: "(libs?|tests?|examples?|vendor)"
 
+# manifest-manager's private modules are not standalone programs.  Analyze them
+# through src/manifest-manager.bash so ShellCheck sees the explicit source graph
+# and the state initialized by earlier modules rather than reporting SC2154
+# false positives from isolated module analysis.
+BASH_SHELLCHECK_ARGUMENTS: -x -P .
+BASH_SHELLCHECK_FILTER_REGEX_EXCLUDE: "^lib/manifest-manager/"
+
 # shfmt will..
 #   - use multiples of 2 spaces for indenting
 #   - alllow binary operations to start new lines
