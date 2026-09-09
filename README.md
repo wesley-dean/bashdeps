@@ -38,11 +38,12 @@ before publication, and successful synchronization ends by hashing final
 destinations again.
 
 `manifest-manager.bash` does not weaken that boundary.  Its `list` command can
-inspect validated complete identities without changing source.  Its `update`
-command can discover a proposed GitHub release, retrieve candidate bytes,
-calculate a proposed digest, and update manifest source surgically.  Resulting
-source changes remain subject to normal review and commit before `bashdeps.bash`
-later treats them as approved input.
+inspect validated complete identities without changing source.  Its `add` command
+can append one complete declaration supplied explicitly by the maintainer without
+acquiring or trusting remote bytes.  Its `update` command can discover a proposed
+GitHub release, retrieve candidate bytes, calculate a proposed digest, and update
+manifest source surgically.  Resulting source changes remain subject to normal
+review and commit before `bashdeps.bash` later treats them as approved input.
 
 ## Requirements
 
@@ -82,7 +83,7 @@ The manifest manager requires Bash 4.3 or newer and ordinary Unix-like filesyste
 utilities used for staging and publication.  Additional capabilities are
 command-specific:
 
-- `list` requires no network client or SHA-256 command;
+- `list` and `add` require no network client or SHA-256 command;
 - `update` requires `curl` and `sha256sum` or `shasum -a 256` when release
   discovery, artifact retrieval, or hashing is required.
 
@@ -175,10 +176,10 @@ PACKAGE@VERSION
 
 Bashdeps does not perform semantic-version resolution.
 
-The manifest manager preserves that opacity for read-only `list` output.  The
-`update` command interprets only the narrower GitHub-oriented identity shape it
-needs for release maintenance.  Neither behavior changes runtime manifest
-semantics.
+The manifest manager preserves that opacity for `list` output and for explicit
+`add` input.  The `update` command interprets only the narrower GitHub-oriented
+identity shape it needs for release maintenance.  None of these behaviors changes
+runtime manifest semantics.
 
 ### URL
 
@@ -371,6 +372,34 @@ produces no output and succeeds.
 manifest to STDOUT; STDOUT belongs to list data.  This differs deliberately from
 the transactional rollback contract used by mutating stream commands.
 
+### Add a declaration
+
+Append one complete dependency declaration supplied explicitly by the maintainer:
+
+```bash
+manifest-manager.bash add \
+  id=acme/tool@v1 \
+  url=https://example.test/tool \
+  dest=vendor/tool \
+  digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+All four named fields are mandatory, although their argument order is arbitrary.
+`add` does not infer a repository convention, artifact URL or filename,
+destination, or digest.  It performs no network access and does not calculate a
+digest from remote bytes.
+
+The existing manifest is validated before append.  Duplicate identities and
+destinations fail.  Existing bytes remain an exact prefix of the candidate, and
+only the new record is serialized canonically as one line in `id`, `url`, `dest`,
+`digest` order.  The new record is appended at absolute EOF after any existing
+comments or blank lines.
+
+The last observed LF or CRLF line-ending style is reused.  LF is used when no
+line-ending style exists.  If a non-empty manifest lacks a final line terminator,
+one selected separator is inserted before the new record.  The new record always
+ends with the selected line terminator.
+
 ### Update existing declarations
 
 Update one dependency to the repository's GitHub latest release:
@@ -406,13 +435,18 @@ manifest-manager.bash update --all
 `--all` does not silently skip commit-pinned or unsupported declarations.  If any
 dependency cannot be updated safely, the entire manifest update fails.
 
-### Transactional update stdin/stdout mode
+### Transactional mutation stdin/stdout mode
 
-For `update`, a filename of `-` reads the complete manifest from standard input
-and writes one complete manifest representation to standard output:
+For `update` and `add`, a filename of `-` reads the complete manifest from standard
+input and writes one complete manifest representation to standard output.  For
+example:
 
 ```bash
-manifest-manager.bash update -f - wesley-dean/bash-doxygen \
+manifest-manager.bash add -f - \
+  id=acme/tool@v1 \
+  url=https://example.test/tool \
+  dest=vendor/tool \
+  digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   <dependencies.txt \
   >dependencies.new.txt
 ```
@@ -420,31 +454,37 @@ manifest-manager.bash update -f - wesley-dean/bash-doxygen \
 After the complete input has been captured:
 
 ```text
-success -> stdout is the complete updated manifest, status 0
+success -> stdout is the complete mutated manifest, status 0
 failure -> stdout is the complete original manifest, nonzero status
 ```
 
 Diagnostics go to standard error.  Callers must inspect the exit status rather
-than treating the presence of output as proof that an update succeeded.
+than treating the presence of output as proof that a mutation succeeded.
 
 ### Surgical source preservation
 
 The manager parses a logical view for validation and dependency selection, but it
-does not regenerate the manifest from parsed fields.  It retains raw record bytes
-and changes only the intended `id`, `url`, and `digest` values for selected update
-records.  `dest` is never changed by `update`.
+does not regenerate existing manifest source from parsed fields.
 
-Successful updates preserve unrelated comments, whitespace, field order,
-continuations, blank lines, trailing whitespace, line endings, and final-newline
-state.  File-mode publication is staged and occurs only after the complete
-requested update has succeeded.
+For `update`, it retains raw record bytes and changes only the intended `id`,
+`url`, and `digest` values for selected records.  `dest` is never changed by
+`update`.
+
+For `add`, every pre-existing byte remains unchanged and the complete original is
+an exact prefix of the candidate.  Only the newly appended record and any required
+separator line ending are newly serialized.
+
+Successful manager mutations use operation-specific preservation proofs before
+publication.  File-mode publication is staged and occurs only after the complete
+requested operation has succeeded.
 
 The current update command supports unambiguous GitHub raw-content and
 release-download URL forms.  It fails rather than guessing when the existing URL,
-identity, or artifact relationship cannot be established safely.
+identity, or artifact relationship cannot be established safely.  `add` likewise
+fails rather than inventing missing declaration data.
 
-ADR-021 defines future explicit `add` and exact-identity `remove` contracts.  They
-are not advertised as implemented commands until their corresponding phases land.
+ADR-021 defines the remaining exact-identity `remove` contract.  It is not
+advertised as an implemented command until its corresponding phase lands.
 
 See [Manifest Manager Behavior Specification](doc/manifest-manager-spec.md),
 ADR-020, and ADR-021 for the complete contracts and rationale.
@@ -484,8 +524,9 @@ The `manifest-manager.bash` public exit categories are:
 6  input, staging, filesystem, output, or publication failed
 ```
 
-Commands use only relevant categories.  In particular, `list` normally uses 0,
-2, and 6 and does not require network or hashing capabilities.
+Commands use only relevant categories.  `list` normally uses 0, 2, and 6;
+`add` normally uses 0, 2, 5, and 6.  Neither requires network or hashing
+capabilities.
 
 A malformed or unterminated continuation is status 2, including a blank/comment
 line where a trailing `\` requires immediate continued record content.
@@ -496,8 +537,8 @@ rather than a publication failure.
 
 Diagnostics are written to standard error.  Successful `install`, `sync`, and
 `verify` operations normally produce no standard output.  Successful manager
-update file operations are likewise quiet; update stream mode reserves standard
-output for the manifest, while `list` reserves it for identity values.
+mutation file operations are likewise quiet; mutation stream mode reserves
+standard output for the manifest, while `list` reserves it for identity values.
 
 ## Trust Boundary
 
@@ -676,6 +717,7 @@ lib/manifest-manager/github.bash
 lib/manifest-manager/transaction.bash
 lib/manifest-manager/update.bash
 lib/manifest-manager/list.bash
+lib/manifest-manager/add.bash
 ```
 
 The build uses explicit source inventories for each executable.  Code needed only

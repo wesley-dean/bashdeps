@@ -4,15 +4,11 @@
 ## @brief Coordinates transactional manifest-manager update operations.
 ## @details
 ## This module connects validated manifest records, GitHub release discovery,
-## candidate retrieval, SHA-256 calculation, surgical literal substitution,
-## reverse preservation proof, and final stream/file publication.  All selected
-## dependencies are planned before a complete candidate is emitted, so `--all`
-## remains a whole-manifest source transaction.
-##
-## File publication compares the current manifest with the captured original and
-## uses a destination-adjacent temporary file.  Stream publication emits exactly
-## one complete candidate on success or the complete captured original on
-## failure after successful input capture.
+## candidate retrieval, SHA-256 calculation, surgical literal substitution, and
+## reverse preservation proof.  All selected dependencies are planned before a
+## complete candidate is emitted, so `--all` remains a whole-manifest source
+## transaction.  Shared stream emission and file publication are owned by
+## `transaction.bash` and do not form part of the update-specific mutation proof.
 ## @see doc/adr/ADR-020-ship-manifest-manager-and-define-surgical-updates.md
 ## @see doc/manifest-manager-spec.md
 ## @par Examples
@@ -375,121 +371,6 @@ __manifest_manager_update_transaction() {
   done
 
   __manifest_manager_finalize_candidate
-}
-
-## @fn __manifest_manager_publish_file()
-## @brief Publishes one validated candidate by staged same-directory
-## replacement.
-## @details
-## A successful no-op leaves the manifest path untouched.  Otherwise the helper
-## rejects a symlink introduced since capture, compares current bytes with the
-## captured original to detect ordinary concurrent edits, creates a temporary
-## file beside the destination, attempts to preserve existing metadata with `cp
-## -p`, overwrites only that temporary file with candidate bytes, and renames it
-## into place after the complete transaction has succeeded.
-## @param manifest Original manifest path selected by the caller.
-## @par STDIN
-## Nothing is read from STDIN.
-## @par STDOUT
-## Nothing is written to STDOUT.
-## @par STDERR
-## A diagnostic identifies concurrent modification or publication failure.
-## @returns Nothing is written to STDOUT.
-## @retval 0 The candidate was atomically published or was an unchanged no-op.
-## @retval 6 Filesystem safety, staging, or publication failed.
-## @par Examples
-## @code
-## __manifest_manager_publish_file dependencies.txt
-## @endcode
-__manifest_manager_publish_file() {
-  local __mm_manifest=$1
-  local __mm_dir __mm_base __mm_tmp
-
-  if cmp -s "$__manifest_manager_original_file" "$__manifest_manager_candidate_file"; then
-    return 0
-  fi
-
-  [[ ! -L $__mm_manifest ]] || {
-    __manifest_manager_diag "manifest became a symbolic link before publication: $__mm_manifest"
-    return 6
-  }
-  if ! cmp -s "$__mm_manifest" "$__manifest_manager_original_file"; then
-    __manifest_manager_diag "manifest changed concurrently; refusing to overwrite: $__mm_manifest"
-    return 6
-  fi
-
-  if [[ $__mm_manifest == */* ]]; then
-    __mm_dir=${__mm_manifest%/*}
-    [[ -n $__mm_dir ]] || __mm_dir=/
-  else
-    __mm_dir=.
-  fi
-  __mm_base=${__mm_manifest##*/}
-  __mm_tmp=$(mktemp "$__mm_dir/.${__mm_base}.manifest-manager.XXXXXX") || {
-    __manifest_manager_diag "unable to create adjacent publication staging for: $__mm_manifest"
-    return 6
-  }
-
-  if ! cp -p "$__mm_manifest" "$__mm_tmp" 2>/dev/null; then
-    cp "$__mm_manifest" "$__mm_tmp" || {
-      rm -f "$__mm_tmp"
-      __manifest_manager_diag "unable to prepare publication metadata for: $__mm_manifest"
-      return 6
-    }
-  fi
-  cat "$__manifest_manager_candidate_file" >"$__mm_tmp" || {
-    rm -f "$__mm_tmp"
-    __manifest_manager_diag "unable to write candidate manifest beside: $__mm_manifest"
-    return 6
-  }
-  mv "$__mm_tmp" "$__mm_manifest" || {
-    rm -f "$__mm_tmp"
-    __manifest_manager_diag "unable to publish candidate manifest: $__mm_manifest"
-    return 6
-  }
-}
-
-## @fn __manifest_manager_stream_emit()
-## @brief Emits the transactional stream result for one completed update
-## attempt.
-## @details
-## Status zero emits the complete validated candidate.  Any non-zero update
-## status emits the complete captured original instead, preserving caller
-## content after a failed transformation.  If output itself fails, status 6
-## replaces the incoming status because the downstream consumer can no longer be
-## guaranteed a complete representation.
-## @param status Update status whose success or failure selects the output.
-## @par STDIN
-## Nothing is read from STDIN.
-## @par STDOUT
-## Exactly one complete candidate on success or captured original on failure.
-## @par STDERR
-## A diagnostic is written only if the selected complete stream cannot be
-## emitted.
-## @returns One complete manifest byte stream when output succeeds.
-## @retval 0 The successful candidate was emitted completely.
-## @retval 6 The selected manifest could not be emitted completely.
-## @note When original failure status is non-zero and rollback output succeeds,
-## that original public status is returned unchanged.
-## @par Examples
-## @code
-## __manifest_manager_stream_emit 0 > dependencies.new.txt
-## @endcode
-__manifest_manager_stream_emit() {
-  local __mm_status=$1
-  local __mm_source
-
-  if ((__mm_status == 0)); then
-    __mm_source=$__manifest_manager_candidate_file
-  else
-    __mm_source=$__manifest_manager_original_file
-  fi
-
-  if ! cat "$__mm_source"; then
-    __manifest_manager_diag 'unable to emit complete transactional manifest stream'
-    return 6
-  fi
-  return "$__mm_status"
 }
 
 ## @fn __manifest_manager_parse_update_cli()
