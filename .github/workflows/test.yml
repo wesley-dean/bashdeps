@@ -66,7 +66,16 @@ jobs:
             --volume "${GITHUB_WORKSPACE}:/work:ro" \
             --workdir /work \
             bash:4.3 \
-            bash -c 'BASHDEPS_EXECUTABLE=src/bashdeps.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.dev.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.bash bash tests/compat-bash.bash && BASHDEPS_EXECUTABLE=dist/bashdeps.min.bash bash tests/compat-bash.bash'
+            bash -c '
+              BASHDEPS_EXECUTABLE=src/bashdeps.bash bash tests/compat-bash.bash &&
+              BASHDEPS_EXECUTABLE=dist/bashdeps.dev.bash bash tests/compat-bash.bash &&
+              BASHDEPS_EXECUTABLE=dist/bashdeps.bash bash tests/compat-bash.bash &&
+              BASHDEPS_EXECUTABLE=dist/bashdeps.min.bash bash tests/compat-bash.bash &&
+              MANIFEST_MANAGER_EXECUTABLE=src/manifest-manager.bash bash tests/compat-manifest-manager.bash &&
+              MANIFEST_MANAGER_EXECUTABLE=dist/manifest-manager.dev.bash bash tests/compat-manifest-manager.bash &&
+              MANIFEST_MANAGER_EXECUTABLE=dist/manifest-manager.bash bash tests/compat-manifest-manager.bash &&
+              MANIFEST_MANAGER_EXECUTABLE=dist/manifest-manager.min.bash bash tests/compat-manifest-manager.bash
+            '
 
   docs:
     runs-on: ubuntu-24.04
