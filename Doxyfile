@@ -22,7 +22,9 @@ INPUT                  = src/bashdeps.bash \
                          lib/manifest-manager/state.bash \
                          lib/manifest-manager/manifest.bash \
                          lib/manifest-manager/github.bash \
-                         lib/manifest-manager/update.bash
+                         lib/manifest-manager/transaction.bash \
+                         lib/manifest-manager/update.bash \
+                         lib/manifest-manager/list.bash
 RECURSIVE              = NO
 FILE_PATTERNS          = *.bash
 
