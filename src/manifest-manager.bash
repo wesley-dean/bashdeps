@@ -11,9 +11,10 @@
 ## The executable is intentionally separate from the bashdeps synchronization
 ## runtime.  It may discover GitHub's latest release and calculate proposed
 ## trust data for `update`, while `add` requires complete declaration data from
-## the caller.  `bashdeps.bash` continues to consume only already-reviewed
-## manifest declarations.  The `list` command reads validated complete identity
-## values without reserializing manifest source.
+## the caller and `remove` deletes one exact selected record.  `bashdeps.bash`
+## continues to consume only already-reviewed manifest declarations.  The
+## `list` command reads validated complete identity values without reserializing
+## manifest source.
 ##
 ## Maintained source loads manager-only implementation modules from
 ## `lib/manifest-manager/`.  Release assembly incorporates that explicit source
@@ -32,6 +33,7 @@
 ## manifest-manager.bash add id=acme/tool@v1 \
 ##   url=https://example.test/tool dest=vendor/tool \
 ##   digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+## manifest-manager.bash remove acme/tool@v1
 ## manifest-manager.bash update wesley-dean/bash-doxygen
 ## @endcode
 
@@ -51,6 +53,8 @@ source "$__manifest_manager_source_root/lib/manifest-manager/update.bash"
 source "$__manifest_manager_source_root/lib/manifest-manager/list.bash"
 # shellcheck source=lib/manifest-manager/add.bash
 source "$__manifest_manager_source_root/lib/manifest-manager/add.bash"
+# shellcheck source=lib/manifest-manager/remove.bash
+source "$__manifest_manager_source_root/lib/manifest-manager/remove.bash"
 unset __manifest_manager_source_root
 # END MANIFEST_MANAGER_SOURCE_IMPORTS
 
@@ -69,9 +73,9 @@ __manifest_manager_build_commit=${__manifest_manager_build_commit:-unknown}
 ## @fn __manifest_manager_usage()
 ## @brief Writes the complete currently supported manager CLI surface to STDOUT.
 ## @details
-## Top-level help summarizes the implemented `update`, `list`, and `add` commands
-## and directs callers to command-specific help for operation details.  Commands
-## defined by ADR-021 but not yet implemented are intentionally not advertised.
+## Top-level help summarizes the implemented `update`, `list`, `add`, and
+## `remove` commands and directs callers to command-specific help for operation
+## details.
 ## @par STDIN
 ## Nothing is read from STDIN.
 ## @par STDOUT
@@ -95,6 +99,7 @@ Usage:
 Commands:
   update    Update one or all existing GitHub-backed dependency declarations.
   add       Append one complete explicit dependency declaration.
+  remove    Remove one dependency by exact complete identity.
   list      List complete validated dependency identity values.
 
 Informational forms:
@@ -361,10 +366,10 @@ __manifest_manager_run_update() {
 ## @fn __manifest_manager_main()
 ## @brief Dispatches the public manifest-manager command-line interface.
 ## @details
-## Top-level help/version forms succeed without manifest input.  `update` and
-## `add` delegate to transactional mutation runners, while `list` delegates to
-## its read-only validated identity runner.  Unknown or missing commands fail
-## with status 2 and a concise diagnostic.
+## Top-level help/version forms succeed without manifest input.  `update`,
+## `add`, and `remove` delegate to transactional mutation runners, while `list`
+## delegates to its read-only validated identity runner.  Unknown or missing
+## commands fail with status 2 and a concise diagnostic.
 ## @param args[] Public command arguments excluding the executable name.
 ## @par STDIN
 ## Depends on the selected command; mutating `-f -` forms and `list -f -`
@@ -385,6 +390,7 @@ __manifest_manager_run_update() {
 ## __manifest_manager_main list
 ## __manifest_manager_main add id=tool@1 url=https://example.test/tool \
 ##   dest=vendor/tool digest=sha256:0123...
+## __manifest_manager_main remove tool@1
 ## __manifest_manager_main update owner/repo v1.2.3
 ## @endcode
 __manifest_manager_main() {
@@ -404,6 +410,10 @@ __manifest_manager_main() {
     add)
       shift
       __manifest_manager_run_add "$@"
+      ;;
+    remove)
+      shift
+      __manifest_manager_run_remove "$@"
       ;;
     list)
       shift
