@@ -14,7 +14,12 @@ setup() {
 @test "help and version expose the manager public CLI" {
   run manifest_manager_run --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"manifest-manager.bash update"* ]]
+  [[ "$output" == *"update    Update one or all"* ]]
+  [[ "$output" == *"list      List complete validated"* ]]
+
+  run manifest_manager_run update --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"manifest-manager.bash update [OPTIONS] ID [VERSION]"* ]]
   [[ "$output" == *"Failure after capture writes the complete"* ]]
 
   run manifest_manager_run --version
