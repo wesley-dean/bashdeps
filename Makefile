@@ -20,7 +20,9 @@ MANAGER_LIB_SOURCES := \
 	$(LIB_DIR)/manifest-manager/state.bash \
 	$(LIB_DIR)/manifest-manager/manifest.bash \
 	$(LIB_DIR)/manifest-manager/github.bash \
-	$(LIB_DIR)/manifest-manager/update.bash
+	$(LIB_DIR)/manifest-manager/transaction.bash \
+	$(LIB_DIR)/manifest-manager/update.bash \
+	$(LIB_DIR)/manifest-manager/list.bash
 MANAGER_SOURCES := $(MANAGER_LIB_SOURCES) $(MANAGER_SOURCE)
 MANAGER_DEV_ARTIFACT := $(DIST_DIR)/manifest-manager.dev.bash
 MANAGER_DEV_CHECKSUM := $(MANAGER_DEV_ARTIFACT).sha256
