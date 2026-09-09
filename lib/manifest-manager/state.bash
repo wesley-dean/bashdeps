@@ -8,12 +8,13 @@
 ## `manifest-manager.bash`.  It does not participate in the `bashdeps.bash`
 ## runtime product.  The helpers centralize temporary-directory ownership,
 ## capability selection, byte-preserving input checks, SHA-256 calculation, and
-## exact literal-string operations used by the surgical mutation contract.
+## exact literal-string operations used by manager mutation contracts.
 ##
 ## The maintained source is sourced by `src/manifest-manager.bash`.  Release
 ## assembly incorporates this file only into the manifest-manager executable
 ## family, as required by ADR-020.
 ## @see doc/adr/ADR-020-ship-manifest-manager-and-define-surgical-updates.md
+## @see doc/adr/ADR-021-extend-manifest-manager-with-list-add-and-remove.md
 ## @see doc/manifest-manager-spec.md
 ## @par Examples
 ## @code
@@ -39,7 +40,7 @@ __manifest_manager_original_file=''
 __manifest_manager_candidate_file=''
 
 ## @var __manifest_manager_stream_mode
-## @brief Whether the active update invocation uses `-f -` stream semantics.
+## @brief Whether the active mutating manager invocation uses `-f -` semantics.
 __manifest_manager_stream_mode=0
 
 ## @fn __manifest_manager_diag()
@@ -47,7 +48,7 @@ __manifest_manager_stream_mode=0
 ## @details
 ## The function joins its arguments using normal shell `$*` semantics and emits
 ## one line.  Centralizing diagnostics keeps stdout available for help, version,
-## or the transactional manifest stream.
+## list data, or transactional manifest streams.
 ## @param message[] Words that form the diagnostic message.
 ## @par STDIN
 ## Nothing is read from STDIN.
@@ -68,7 +69,7 @@ __manifest_manager_diag() {
 }
 
 ## @fn __manifest_manager_stage_create()
-## @brief Allocates private staging used by one update transaction.
+## @brief Allocates private staging used by one manager transaction.
 ## @details
 ## The stage is created beneath `${TMPDIR:-/tmp}` with `mktemp -d`.  Original
 ## and candidate manifest paths are then assigned inside that directory.  A
@@ -114,7 +115,7 @@ __manifest_manager_stage_create() {
 }
 
 ## @fn __manifest_manager_stage_cleanup()
-## @brief Removes private transaction staging owned by the current process.
+## @brief Removes private transaction staging owned by the current manager process.
 ## @details
 ## Cleanup is idempotent.  The function removes only the exact directory
 ## recorded by `__manifest_manager_stage_dir`, then clears related process state
@@ -154,7 +155,7 @@ __manifest_manager_stage_cleanup() {
 ## The source must be a readable regular file and must not be a symbolic link.
 ## Rejecting symlinks avoids replacing a link itself during later atomic
 ## publication.  The exact bytes are copied into the already-created original
-## transaction path before any network work occurs.
+## transaction path before command-specific mutation work occurs.
 ## @param source Manifest path to capture.
 ## @par STDIN
 ## Nothing is read from STDIN.
@@ -190,10 +191,10 @@ __manifest_manager_capture_file() {
 ## @fn __manifest_manager_capture_stdin()
 ## @brief Captures the complete STDIN manifest before transactional stream work.
 ## @details
-## Stream mode cannot emit incrementally because a later failure must reproduce
-## the original input byte-for-byte.  This helper therefore consumes STDIN into
-## private staging before CLI validation that can depend on the manifest or any
-## release/network operation.
+## Mutating stream mode cannot emit incrementally because a later failure must
+## reproduce the original input byte-for-byte.  This helper therefore consumes
+## STDIN into private staging before CLI validation that can depend on manifest
+## contents or before command-specific mutation work begins.
 ## @par STDIN
 ## The complete manifest byte stream to capture.
 ## @par STDOUT
@@ -223,8 +224,8 @@ __manifest_manager_capture_stdin() {
 ## @brief Verifies that Bash can round-trip the complete manifest byte-for-byte.
 ## @details
 ## Bash variables cannot represent NUL bytes and `read` can therefore discard
-## data that cannot safely participate in surgical string replacement.  The
-## helper reads each physical line with Bash, reproduces the exact line
+## data that cannot safely participate in source-preserving manager operations.
+## The helper reads each physical line with Bash, reproduces the exact line
 ## terminator state into a temporary file, and compares that reproduction with
 ## the source. Any difference makes the manifest invalid for this tool rather
 ## than allowing silent truncation or normalization.
