@@ -430,7 +430,7 @@ __manifest_manager_parse_manifest() {
         __manifest_manager_trim_trailing_blank "$__mm_fragment" __mm_fragment
         __mm_line_continues=1
       else
-        __mm_fragment+=\\
+        __mm_fragment+=$'\\'
       fi
     fi
 
