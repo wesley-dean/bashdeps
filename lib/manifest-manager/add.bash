@@ -470,9 +470,10 @@ __manifest_manager_add_transaction() {
 
   if __manifest_manager_parse_manifest "$__manifest_manager_candidate_file"; then
     return 0
+  else
+    __mm_status=$?
   fi
 
-  __mm_status=$?
   if ((__mm_status == 2)); then
     __manifest_manager_diag \
       'candidate manifest became invalid after append-only mutation'
@@ -488,7 +489,7 @@ __manifest_manager_add_transaction() {
 ## stream mode captures STDIN before full CLI parsing so later invalid arguments
 ## can reproduce the original bytes, matching ADR-020's mutating stream contract.
 ## File mode parses arguments before capturing the selected manifest.  A validated
-## add candidate then uses the existing manager publication/output helpers.
+## add candidate then uses the shared manager publication/output helpers.
 ## @param args[] Arguments following the public `add` subcommand.
 ## @par STDIN
 ## The complete manifest only when `-f -` stream mode is selected.
