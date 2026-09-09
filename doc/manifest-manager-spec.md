@@ -3,38 +3,44 @@
 ## Purpose
 
 `manifest-manager.bash` is the maintainer-side companion to `bashdeps.bash`.  It
-prepares deliberate source changes to existing bashdeps manifests by coordinating
-an updated dependency identity, immutable GitHub artifact URL, and SHA-256 digest.
+prepares deliberate source changes to bashdeps manifests and provides validated
+read-only inspection without moving release discovery or trust changes into the
+runtime synchronizer.
 
 It does not synchronize dependency destinations and is not involved in runtime
-byte acceptance.  The committed manifest remains trusted source; a manager update
-is a proposal that becomes authorized only through the consuming repository's
-normal review and commit process.
+byte acceptance.  The committed manifest remains trusted source; a manager
+mutation is a proposal that becomes authorized only through the consuming
+repository's normal review and commit process.
 
-The initial public mutation command is `update`.
+The currently implemented commands are `update` and `list`.  ADR-021 additionally
+defines future `add` and `remove` contracts, but those commands are not part of
+the public executable until their implementation lands.
 
 ## Runtime Requirements
 
-The manager requires:
+The manager requires Bash 4.3 or newer and ordinary Unix-like filesystem tools
+used for private staging and publication.
 
-- Bash 4.3 or newer;
-- curl;
-- `sha256sum` or `shasum -a 256`; and
-- ordinary Unix-like filesystem tools used for private staging and publication.
+Capabilities are command-specific:
 
-It does not require `gh`, `jq`, Git, Python, or `bashdeps.bash`.
+- `list` requires no network client or SHA-256 command;
+- `update` requires curl and `sha256sum` or `shasum -a 256` when update work
+  requires release discovery, artifact retrieval, or hashing.
+
+The executable does not require `gh`, `jq`, Git, Python, or `bashdeps.bash`.
 
 These requirements apply to `manifest-manager.bash` only.  They do not change the
 runtime capabilities required by `bashdeps.bash`.
 
 ## Public CLI
 
-The public forms are:
+The currently implemented public forms are:
 
 ```text
 manifest-manager.bash update [OPTIONS] ID [VERSION]
 manifest-manager.bash update [OPTIONS] ID@VERSION
 manifest-manager.bash update [OPTIONS] --all
+manifest-manager.bash list [OPTIONS]
 manifest-manager.bash help
 manifest-manager.bash version
 ```
@@ -48,16 +54,26 @@ Update options are:
 -V, --version
 ```
 
+List options are:
+
+```text
+-f, --filename FILE
+-h, --help
+-V, --version
+```
+
 The default manifest is:
 
 ```text
 dependencies.txt
 ```
 
-`-f FILE` selects another manifest.  `-f -` selects transactional stdin/stdout
-stream mode.
+`-f FILE` selects another manifest.  `-f -` is meaningful for both implemented
+commands, but its STDOUT contract depends on the command: `update` is a
+transactional source transform, while `list` is read-only data output.
 
-`--all` cannot be combined with a positional ID or VERSION.
+`update --all` cannot be combined with a positional ID or VERSION.  `list` accepts
+no positional arguments.
 
 The executable is non-interactive.
 
@@ -71,10 +87,22 @@ manifest-manager.bash -h
 manifest-manager.bash --help
 ```
 
-`manifest-manager.bash update -h` and `update --help` also produce help.
+Top-level help summarizes implemented subcommands and shared informational forms.
+It does not advertise commands whose contracts are defined by an ADR but whose
+implementation has not yet landed.
 
-Help writes to STDOUT and returns status 0.  It describes command syntax, version
-selection, stream-mode rollback behavior, and exit categories.
+These command-specific help forms write to STDOUT and return status 0:
+
+```text
+manifest-manager.bash update -h
+manifest-manager.bash update --help
+manifest-manager.bash list -h
+manifest-manager.bash list --help
+```
+
+Subcommand help documents command syntax, options, file/stream behavior, output,
+and relevant exit categories.  Informational help does not consume STDIN even
+when `-f -` is also present.
 
 These version forms are equivalent:
 
@@ -84,6 +112,7 @@ manifest-manager.bash -V
 manifest-manager.bash --version
 ```
 
+`update` and `list` also accept `-V` and `--version` as informational forms.
 Generated artifacts report the shared bashdeps project release version, source
 revision date, and source commit while identifying the executable as
 `manifest-manager.bash`.
@@ -106,13 +135,76 @@ Field order is irrelevant.  Blank lines and full-line comments are allowed outsi
 an active continuation.  Explicit standalone trailing `\` continuation markers
 fold physical lines exactly as bashdeps defines them.
 
-The manager validates the manifest before update work.  It never sources, evals,
-or shell-expands manifest content.
+The manager validates a selected manifest before command-specific work that relies
+on its records.  It never sources, evals, or shell-expands manifest content.
 
 Parsing creates a logical validation view and retains the exact raw physical bytes
-for every record.  The logical view is never serialized back into the output.
+for every record.  The logical view is never serialized back into source merely
+to inspect or update a manifest.
 
-## Dependency Selection
+## `list`
+
+`list` is a read-only manifest inspection command:
+
+```text
+manifest-manager.bash list [OPTIONS]
+```
+
+On success, it writes each complete validated `id` value to STDOUT, one identity
+per line, in manifest order.
+
+For example, a manifest containing identities:
+
+```text
+id=acme/tool@v1
+id=other.example/helper@release-7
+```
+
+produces:
+
+```text
+acme/tool@v1
+other.example/helper@release-7
+```
+
+The values are complete logical `id` fields.  `list` does not strip versions,
+reduce identities to GitHub package coordinates, or otherwise reinterpret the
+identity.  This keeps the command consistent with the runtime rule that `id` is
+opaque metadata.
+
+The complete selected manifest is parsed and validated before the first identity
+is emitted.  A malformed later record therefore cannot produce a successful or
+partial prefix of list output.
+
+A valid empty manifest succeeds and writes nothing.
+
+`list` never reserializes the manifest and never mutates the source path.
+
+### List file mode
+
+With a normal filename, the file is captured into private staging and fully
+validated before output begins.  The selected file remains unchanged.
+
+### List stream mode
+
+With:
+
+```text
+manifest-manager.bash list -f -
+```
+
+the complete manifest is read from STDIN and validated before identities are
+written to STDOUT.
+
+Unlike a mutating command, `list` does not use rollback-manifest output.  On
+failure, STDOUT contains no list data intentionally; diagnostics go to STDERR and
+the command returns nonzero.  STDOUT belongs to the identity list, not a
+transformed source representation.
+
+`list` requires no release discovery, network access, artifact retrieval, or
+SHA-256 implementation.
+
+## Update Dependency Selection
 
 A single-dependency update accepts a GitHub package name in this form:
 
@@ -144,7 +236,7 @@ with the same package prefix fail.
 
 `update` does not add a missing dependency.
 
-## Version Selection
+## Update Version Selection
 
 ### Explicit VERSION
 
@@ -183,8 +275,8 @@ With:
 manifest-manager.bash update OWNER/REPO
 ```
 
-or for each dependency under `--all`, the manager uses GitHub's canonical latest
-release.
+or for each dependency under `update --all`, the manager uses GitHub's canonical
+latest release.
 
 It requests:
 
@@ -207,7 +299,7 @@ The manager does not call the GitHub REST API or parse JSON to perform this look
 
 ## Existing Identity and URL Relationship
 
-The initial manager recognizes these immutable GitHub URL families:
+The initial update implementation recognizes these immutable GitHub URL families:
 
 ```text
 https://raw.githubusercontent.com/OWNER/REPO/REF/ARTIFACT_PATH
@@ -245,7 +337,7 @@ or artifact inference.
 
 ## Candidate Artifact and Digest
 
-For one selected record, the manager:
+For one selected update record, the manager:
 
 1. replaces only the recognized current URL ref/tag with the exact target tag to
    construct a candidate artifact URL;
@@ -260,7 +352,7 @@ bytes do not match the currently committed digest, the update fails.  This avoid
 silently authorizing changed bytes at a location the manifest already described
 as immutable.
 
-## Surgical Mutation Contract
+## Surgical Update Mutation Contract
 
 For each selected dependency, `update` may change only these field values:
 
@@ -301,9 +393,12 @@ A successful update therefore preserves all unrelated bytes, including:
 Input containing bytes that cannot make a lossless round trip through the Bash
 string representation, including NUL, is rejected rather than changed.
 
-## File Mode
+ADR-021 retains this operation-specific proof approach for later mutation
+commands.  It does not authorize parse-and-reserialize rewriting.
 
-With a normal manifest filename, successful operation is quiet on STDOUT.
+## Update File Mode
+
+With a normal manifest filename, successful update operation is quiet on STDOUT.
 
 The manager captures the complete original file before any network update work.
 No failed update intentionally modifies the manifest path.
@@ -321,10 +416,10 @@ A successful no-op leaves the original path untouched.
 The manager does not provide locking or claim race-proof behavior against a
 hostile concurrent local process.
 
-## Stream Mode
+## Update Stream Mode
 
-`-f -` reads the complete manifest from STDIN before release discovery, artifact
-retrieval, hashing, or mutation.
+`update -f -` reads the complete manifest from STDIN before release discovery,
+artifact retrieval, hashing, or mutation.
 
 After complete input capture:
 
@@ -354,10 +449,10 @@ If STDIN fails before complete capture, bytes never received cannot be reproduce
 If writing STDOUT fails, the manager cannot guarantee that the downstream consumer
 received a complete representation.
 
-Help and version output remain informational success output and do not need to
-consume STDIN.
+Help and version output remain informational success output and do not consume
+STDIN.
 
-## `--all`
+## `update --all`
 
 `manifest-manager.bash update --all` selects every dependency in the manifest.
 
@@ -376,17 +471,19 @@ record fails the entire transaction.
 
 Unsupported records are not silently skipped.
 
-A valid empty manifest is a successful no-op for `--all` and does not require
-network/hash capabilities.
+A valid empty manifest is a successful no-op for `update --all` and does not
+require network/hash capabilities.
 
 ## Output Channels
 
-Normal successful file-mode updates write nothing to STDOUT.
+Top-level and command-specific help and version information write to STDOUT.
 
-Help and version write to STDOUT.
+Successful update file mode writes nothing to STDOUT.  Update stream mode reserves
+STDOUT for exactly one complete manifest representation after input capture.
 
-Stream mode reserves STDOUT for exactly one complete manifest representation after
-input capture.
+`list` reserves STDOUT for complete identities, one per line.  Because complete
+validation precedes emission, invalid manifests do not intentionally produce a
+partial list.
 
 Diagnostics write to STDERR.
 
@@ -398,12 +495,16 @@ The public exit categories are:
 
 ```text
 0  success, help, version, or successful no-op
-2  invalid CLI, manifest, dependency selection, or update declaration
+2  invalid CLI, manifest, dependency selection, or declaration
 3  required runtime capability unavailable or unusable
 4  latest-release discovery or network acquisition failed
-5  exact-substitution or preservation safety check failed
-6  input, staging, filesystem, or publication failed
+5  exact-mutation or preservation safety check failed
+6  input, staging, filesystem, output, or publication failed
 ```
+
+Commands use only categories relevant to their behavior.  `list` normally uses 0,
+2, and 6; it does not report network or hashing failures for capabilities it never
+requires.
 
 The implementation may use private helper statuses internally, but the public CLI
 must remain within these categories.
@@ -419,15 +520,32 @@ moves genuinely shared behavior into both source closures.
 
 Both products share one project release version and each ships developer,
 comment-stripped, and minified executables with matching `.sha256` companions.
+The addition of `list` does not change the twelve-file release asset contract.
 
 The manager behavior suite is run independently against maintained source and all
 three manager distribution artifacts.
 
+## Future ADR-021 Commands
+
+ADR-021 defines conservative contracts for future `add` and `remove` commands.
+Those decisions reserve semantics, not current CLI availability.
+
+`add` will require explicit `id=`, `url=`, `dest=`, and `digest=` input and will
+not infer URLs, destinations, artifact names, or digests.  It will append only new
+canonical record bytes while preserving the complete original source as an exact
+prefix.
+
+`remove` will select one exact complete identity and delete only that record's
+physical chunk.  Nearby comments and blank lines will remain because the manifest
+grammar does not define comment ownership.
+
+Neither command is advertised by current top-level help until implemented.
+
 ## Non-Goals
 
-The initial manager does not provide:
+The current manager does not provide:
 
-- `add`, `remove`, `list`, or `show` behavior;
+- implemented `add`, `remove`, or `show` behavior;
 - semantic-version ranges or constraint solving;
 - transitive dependency resolution;
 - package registries;
@@ -437,6 +555,7 @@ The initial manager does not provide:
 - JSON output;
 - a public sourceable Bash API;
 - authenticated/private GitHub retrieval; or
-- silent skipping of unsupported dependencies under `--all`.
+- silent skipping of unsupported dependencies under `update --all`.
 
-Possible `add`, `remove`, and `list` commands are tracked separately by issue #17.
+ADR-021 governs future `add` and `remove` implementation.  `show` remains outside
+the accepted command set unless a concrete need produces a separate decision.
