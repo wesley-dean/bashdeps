@@ -12,9 +12,9 @@ byte acceptance.  The committed manifest remains trusted source; a manager
 mutation is a proposal that becomes authorized only through the consuming
 repository's normal review and commit process.
 
-The currently implemented commands are `update`, `list`, and `add`.  ADR-021
-additionally defines a future `remove` contract, but that command is not part of
-the public executable until its implementation lands.
+The currently implemented commands are `update`, `list`, `add`, and `remove`.
+ADR-021 defines the relationships and preservation contracts among these
+operations.
 
 ## Runtime Requirements
 
@@ -23,7 +23,7 @@ used for private staging and publication.
 
 Capabilities are command-specific:
 
-- `list` and `add` require no network client or SHA-256 command;
+- `list`, `add`, and `remove` require no network client or SHA-256 command;
 - `update` requires curl and `sha256sum` or `shasum -a 256` when update work
   requires release discovery, artifact retrieval, or hashing.
 
@@ -41,6 +41,7 @@ manifest-manager.bash update [OPTIONS] ID [VERSION]
 manifest-manager.bash update [OPTIONS] ID@VERSION
 manifest-manager.bash update [OPTIONS] --all
 manifest-manager.bash add [OPTIONS] id=VALUE url=VALUE dest=VALUE digest=sha256:HEX
+manifest-manager.bash remove [OPTIONS] ID
 manifest-manager.bash list [OPTIONS]
 manifest-manager.bash help
 manifest-manager.bash version
@@ -55,7 +56,7 @@ Update options are:
 -V, --version
 ```
 
-Add and list options are:
+Add, remove, and list options are:
 
 ```text
 -f, --filename FILE
@@ -70,12 +71,14 @@ dependencies.txt
 ```
 
 `-f FILE` selects another manifest.  `-f -` is meaningful for all implemented
-manifest commands, but its STDOUT contract depends on the command: `update` and
-`add` are transactional source transforms, while `list` is read-only data output.
+manifest commands, but its STDOUT contract depends on the command: `update`,
+`add`, and `remove` are transactional source transforms, while `list` is
+read-only data output.
 
 `update --all` cannot be combined with a positional ID or VERSION.  `list` accepts
 no positional arguments.  `add` accepts exactly one each of the four named
-manifest fields and no other positional form.
+manifest fields and no other positional form.  `remove` accepts exactly one
+complete identity value.
 
 The executable is non-interactive.
 
@@ -90,8 +93,7 @@ manifest-manager.bash --help
 ```
 
 Top-level help summarizes implemented subcommands and shared informational forms.
-It does not advertise commands whose contracts are defined by an ADR but whose
-implementation has not yet landed.
+It does not advertise commands whose contracts are not implemented.
 
 These command-specific help forms write to STDOUT and return status 0:
 
@@ -100,6 +102,8 @@ manifest-manager.bash update -h
 manifest-manager.bash update --help
 manifest-manager.bash add -h
 manifest-manager.bash add --help
+manifest-manager.bash remove -h
+manifest-manager.bash remove --help
 manifest-manager.bash list -h
 manifest-manager.bash list --help
 ```
@@ -116,10 +120,10 @@ manifest-manager.bash -V
 manifest-manager.bash --version
 ```
 
-`update`, `add`, and `list` also accept `-V` and `--version` as informational
-forms.  Generated artifacts report the shared bashdeps project release version,
-source revision date, and source commit while identifying the executable as
-`manifest-manager.bash`.
+`update`, `add`, `remove`, and `list` also accept `-V` and `--version` as
+informational forms.  Generated artifacts report the shared bashdeps project
+release version, source revision date, and source commit while identifying the
+executable as `manifest-manager.bash`.
 
 ## Manifest Grammar
 
@@ -143,8 +147,9 @@ The manager validates a selected manifest before command-specific work that reli
 on its records.  It never sources, evals, or shell-expands manifest content.
 
 Parsing creates a logical validation view and retains the exact raw physical bytes
-for every record.  The logical view is never serialized back into source merely
-to inspect or mutate a manifest.
+for every record.  It also retains an ordered source-chunk view in which comments,
+blank lines, and complete logical records remain independent.  The logical view is
+never serialized back into source merely to inspect or mutate a manifest.
 
 ## `list`
 
@@ -313,6 +318,86 @@ Diagnostics go to STDERR.  Callers must inspect the exit status rather than
 assuming the presence of manifest output means the append succeeded.
 
 Help and version remain informational output and do not consume STDIN.
+
+## `remove`
+
+`remove` deletes one dependency selected by its complete logical identity:
+
+```text
+manifest-manager.bash remove [OPTIONS] ID
+```
+
+`ID` is the complete value of the dependency's `id=` field.  Matching is exact
+and provider-neutral.  `remove` does not strip a version component, interpret a
+GitHub `OWNER/REPO` package prefix, parse semantic versions, or otherwise transform
+the supplied identity before comparison.
+
+The complete existing manifest is parsed and validated before selection.  Zero
+exact matches fail with status 2.  Duplicate identities are already invalid under
+the version-1 manifest grammar, so a manifest containing multiple records with the
+same ID also fails before mutation.
+
+### Remove physical-record semantics
+
+A successful removal deletes exactly the selected logical record's complete
+physical source chunk.  For a one-line record, that means the one physical record
+line and its line terminator when one exists.  For an ADR-015 continued record,
+the removal includes every physical continuation line that belongs to that same
+logical record and the final physical line's terminator when present.
+
+Comments and blank lines remain independent source chunks.  A comment immediately
+before or after the selected record is preserved exactly, as are adjacent blank
+lines.  `remove` does not infer whether prose or spacing belongs to a dependency.
+A human may later choose to tidy such source in a separate edit.
+
+Every surviving source byte remains unchanged and in its original order.  No
+separator, line ending, indentation, or final newline is inserted or normalized to
+make the result look tidier.
+
+### Remove preservation proof
+
+Candidate generation uses the parser's ordered exact source chunks and omits only
+the one record chunk associated with the selected logical record.
+
+Before publication, the implementation independently reconstructs the captured
+original from the complete chunk sequence and requires byte-for-byte equality.  It
+also reconstructs the expected candidate from the same sequence while omitting
+exactly one selected record chunk, verifies that the omitted chunk equals the
+retained raw bytes for the selected record, and requires the staged candidate to
+match that expected candidate byte-for-byte.
+
+The complete candidate is then reparsed.  A failure of the exact-one-record
+omission proof or an unexpectedly invalid candidate is a status 5 safety failure.
+
+### Remove file mode
+
+With a normal filename, successful `remove` is quiet on STDOUT.  The manifest must
+already exist as a readable regular non-symlink file.  Removing the only dependency
+may intentionally leave an empty valid manifest or leave only comments and blank
+lines that were already present.
+
+Publication uses the shared staged same-directory replacement discipline.  A
+concurrent content change or newly introduced symlink causes failure rather than
+overwrite.
+
+### Remove stream mode
+
+`remove -f -` uses the mutating stream transaction contract shared by `update` and
+`add`.  Recognizable stream syntax captures the complete input before full CLI
+validation so selection and CLI failures can reproduce the original input.
+
+After complete input capture:
+
+```text
+success -> STDOUT is the complete manifest with one record removed, status 0
+failure -> STDOUT is the complete original manifest, nonzero status
+```
+
+Diagnostics go to STDERR.  Callers must inspect the exit status.  Help and version
+remain informational output and do not consume STDIN.
+
+`remove` requires no provider interpretation, release discovery, network access,
+artifact retrieval, or SHA-256 implementation.
 
 ## Update Dependency Selection
 
@@ -588,9 +673,9 @@ require network/hash capabilities.
 
 Top-level and command-specific help and version information write to STDOUT.
 
-Successful `update` and `add` file mode writes nothing to STDOUT.  Their stream
-modes reserve STDOUT for exactly one complete manifest representation after input
-capture.
+Successful `update`, `add`, and `remove` file mode writes nothing to STDOUT.  Their
+stream modes reserve STDOUT for exactly one complete manifest representation after
+input capture.
 
 `list` reserves STDOUT for complete identities, one per line.  Because complete
 validation precedes emission, invalid manifests do not intentionally produce a
@@ -614,8 +699,8 @@ The public exit categories are:
 ```
 
 Commands use only categories relevant to their behavior.  `list` normally uses 0,
-2, and 6.  `add` normally uses 0, 2, 5, and 6.  Neither command reports network or
-hashing failures for capabilities it never requires.
+2, and 6.  `add` and `remove` normally use 0, 2, 5, and 6.  These commands do not
+report network or hashing failures for capabilities they never require.
 
 The implementation may use private helper statuses internally, but the public CLI
 must remain within these categories.
@@ -631,27 +716,31 @@ moves genuinely shared behavior into both source closures.
 
 Both products share one project release version and each ships developer,
 comment-stripped, and minified executables with matching `.sha256` companions.
-The `list` and `add` commands do not change the twelve-file release asset contract.
+The `list`, `add`, and `remove` commands do not change the twelve-file release
+asset contract.
 
 The manager behavior suite is run independently against maintained source and all
 three manager distribution artifacts.
 
-## Future ADR-021 Command
+## ADR-021 Command Set
 
-ADR-021 defines the conservative contract for future `remove` behavior.  That
-decision reserves semantics, not current CLI availability.
+ADR-021 defines the implemented conservative contracts for `list`, `add`, and
+`remove`.  The commands share validated parsing and lifecycle infrastructure while
+retaining operation-specific output and preservation proofs:
 
-`remove` will select one exact complete identity and delete only that record's
-physical chunk.  Nearby comments and blank lines will remain because the manifest
-grammar does not define comment ownership.
+- `list` validates completely before emitting opaque identity values;
+- `add` preserves the original source as an exact prefix followed only by its
+  deliberately constructed canonical append; and
+- `remove` preserves the ordered source chunk sequence with exactly one selected
+  record omitted.
 
-`remove` is not advertised by current top-level help until implemented.
+None of these contracts authorizes parse-and-reserialize source rewriting.
 
 ## Non-Goals
 
 The current manager does not provide:
 
-- implemented `remove` or `show` behavior;
+- `show` behavior;
 - semantic-version ranges or constraint solving;
 - transitive dependency resolution;
 - package registries;
@@ -659,10 +748,11 @@ The current manager does not provide:
 - artifact-name inference;
 - destination inference;
 - automatic digest calculation for `add`;
+- automatic comment cleanup for `remove`;
 - JSON output;
 - a public sourceable Bash API;
 - authenticated/private GitHub retrieval; or
 - silent skipping of unsupported dependencies under `update --all`.
 
-ADR-021 governs future `remove` implementation.  `show` remains outside the
-accepted command set unless a concrete need produces a separate decision.
+`show` remains outside the accepted command set unless a concrete need produces a
+separate decision.
