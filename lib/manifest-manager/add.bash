@@ -438,7 +438,8 @@ __manifest_manager_add_prove_candidate() {
 ## __manifest_manager_add_transaction
 ## @endcode
 __manifest_manager_add_transaction() {
-  local __mm_record __mm_eol __mm_separator __mm_append='' __mm_status
+  local __mm_record __mm_append='' __mm_status
+  local __mm_selected_eol __mm_needs_separator
 
   __manifest_manager_parse_manifest "$__manifest_manager_original_file" || return $?
 
@@ -450,12 +451,13 @@ __manifest_manager_add_transaction() {
 
   __manifest_manager_parse_record "$__mm_record" || return $?
   __manifest_manager_add_detect_layout \
-    "$__manifest_manager_original_file" __mm_eol __mm_separator || return $?
+    "$__manifest_manager_original_file" \
+    __mm_selected_eol __mm_needs_separator || return $?
 
-  if ((__mm_separator)); then
-    __mm_append+="$__mm_eol"
+  if ((__mm_needs_separator)); then
+    __mm_append+="$__mm_selected_eol"
   fi
-  __mm_append+="$__mm_record$__mm_eol"
+  __mm_append+="$__mm_record$__mm_selected_eol"
 
   cat "$__manifest_manager_original_file" >"$__manifest_manager_candidate_file" || {
     __manifest_manager_diag 'unable to stage original bytes for add candidate'
