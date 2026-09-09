@@ -45,6 +45,9 @@ check_status 0 "$status" 'help'
 capture_status status bash "$MANIFEST_MANAGER_EXECUTABLE" --version
 check_status 0 "$status" 'version'
 
+capture_status status bash "$MANIFEST_MANAGER_EXECUTABLE" list --help
+check_status 0 "$status" 'list help'
+
 capture_status status bash "$MANIFEST_MANAGER_EXECUTABLE" unknown
 check_status 2 "$status" 'unknown command'
 
@@ -61,6 +64,22 @@ fi
 check_status 2 "$status" 'stream CLI failure'
 if ! cmp -s "$work/input" "$work/output"; then
   printf 'FAIL: stream CLI rollback did not preserve input bytes\n' >&2
+  failures=$((failures + 1))
+fi
+
+digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+printf '%s\n' \
+  "id=acme/tool@v1 url=https://example.test/tool dest=vendor/tool digest=sha256:$digest" \
+  >"$work/dependencies.txt"
+if bash "$MANIFEST_MANAGER_EXECUTABLE" list -f "$work/dependencies.txt" \
+  >"$work/list-output" 2>/dev/null; then
+  status=0
+else
+  status=$?
+fi
+check_status 0 "$status" 'list manifest identities'
+if [[ $(cat "$work/list-output") != 'acme/tool@v1' ]]; then
+  printf 'FAIL: list did not emit the complete identity\n' >&2
   failures=$((failures + 1))
 fi
 
