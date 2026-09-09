@@ -97,7 +97,7 @@ __manifest_manager_percent_decode_path_component() {
     fi
 
     printf -v __mm_oct '%03o' "$((16#$__mm_hex))"
-    printf -v __mm_byte '%b' "\$__mm_oct"
+    printf -v __mm_byte '%b' "\\$__mm_oct"
     __mm_decoded+=$__mm_byte
     __mm_index=$((__mm_index + 3))
   done
