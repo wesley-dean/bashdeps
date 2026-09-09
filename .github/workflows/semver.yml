@@ -81,3 +81,9 @@ jobs:
             dist/bashdeps.bash.sha256
             dist/bashdeps.min.bash
             dist/bashdeps.min.bash.sha256
+            dist/manifest-manager.dev.bash
+            dist/manifest-manager.dev.bash.sha256
+            dist/manifest-manager.bash
+            dist/manifest-manager.bash.sha256
+            dist/manifest-manager.min.bash
+            dist/manifest-manager.min.bash.sha256
