@@ -12,9 +12,9 @@ byte acceptance.  The committed manifest remains trusted source; a manager
 mutation is a proposal that becomes authorized only through the consuming
 repository's normal review and commit process.
 
-The currently implemented commands are `update` and `list`.  ADR-021 additionally
-defines future `add` and `remove` contracts, but those commands are not part of
-the public executable until their implementation lands.
+The currently implemented commands are `update`, `list`, and `add`.  ADR-021
+additionally defines a future `remove` contract, but that command is not part of
+the public executable until its implementation lands.
 
 ## Runtime Requirements
 
@@ -23,7 +23,7 @@ used for private staging and publication.
 
 Capabilities are command-specific:
 
-- `list` requires no network client or SHA-256 command;
+- `list` and `add` require no network client or SHA-256 command;
 - `update` requires curl and `sha256sum` or `shasum -a 256` when update work
   requires release discovery, artifact retrieval, or hashing.
 
@@ -40,6 +40,7 @@ The currently implemented public forms are:
 manifest-manager.bash update [OPTIONS] ID [VERSION]
 manifest-manager.bash update [OPTIONS] ID@VERSION
 manifest-manager.bash update [OPTIONS] --all
+manifest-manager.bash add [OPTIONS] id=VALUE url=VALUE dest=VALUE digest=sha256:HEX
 manifest-manager.bash list [OPTIONS]
 manifest-manager.bash help
 manifest-manager.bash version
@@ -54,7 +55,7 @@ Update options are:
 -V, --version
 ```
 
-List options are:
+Add and list options are:
 
 ```text
 -f, --filename FILE
@@ -68,12 +69,13 @@ The default manifest is:
 dependencies.txt
 ```
 
-`-f FILE` selects another manifest.  `-f -` is meaningful for both implemented
-commands, but its STDOUT contract depends on the command: `update` is a
-transactional source transform, while `list` is read-only data output.
+`-f FILE` selects another manifest.  `-f -` is meaningful for all implemented
+manifest commands, but its STDOUT contract depends on the command: `update` and
+`add` are transactional source transforms, while `list` is read-only data output.
 
 `update --all` cannot be combined with a positional ID or VERSION.  `list` accepts
-no positional arguments.
+no positional arguments.  `add` accepts exactly one each of the four named
+manifest fields and no other positional form.
 
 The executable is non-interactive.
 
@@ -96,6 +98,8 @@ These command-specific help forms write to STDOUT and return status 0:
 ```text
 manifest-manager.bash update -h
 manifest-manager.bash update --help
+manifest-manager.bash add -h
+manifest-manager.bash add --help
 manifest-manager.bash list -h
 manifest-manager.bash list --help
 ```
@@ -112,9 +116,9 @@ manifest-manager.bash -V
 manifest-manager.bash --version
 ```
 
-`update` and `list` also accept `-V` and `--version` as informational forms.
-Generated artifacts report the shared bashdeps project release version, source
-revision date, and source commit while identifying the executable as
+`update`, `add`, and `list` also accept `-V` and `--version` as informational
+forms.  Generated artifacts report the shared bashdeps project release version,
+source revision date, and source commit while identifying the executable as
 `manifest-manager.bash`.
 
 ## Manifest Grammar
@@ -140,7 +144,7 @@ on its records.  It never sources, evals, or shell-expands manifest content.
 
 Parsing creates a logical validation view and retains the exact raw physical bytes
 for every record.  The logical view is never serialized back into source merely
-to inspect or update a manifest.
+to inspect or mutate a manifest.
 
 ## `list`
 
@@ -203,6 +207,112 @@ transformed source representation.
 
 `list` requires no release discovery, network access, artifact retrieval, or
 SHA-256 implementation.
+
+## `add`
+
+`add` appends one deliberately supplied dependency declaration:
+
+```text
+manifest-manager.bash add [OPTIONS] \
+  id=VALUE url=VALUE dest=VALUE digest=sha256:HEX
+```
+
+Exactly one each of `id=`, `url=`, `dest=`, and `digest=` is mandatory.  The four
+field arguments may appear in any order.  Each field token is split only at its
+first `=`, so additional equals signs remain part of the field value.
+
+Unknown, duplicate, missing, empty, whitespace-bearing, or otherwise invalid
+fields fail with status 2.  The declaration must satisfy the same version-1
+manifest validation rules as a committed record, including HTTPS URL, canonical
+project-relative destination text, and a lowercase 64-hex `sha256:` digest.
+
+`add` does not infer or invent:
+
+- artifact URLs;
+- artifact filenames;
+- destination paths;
+- repositories or hosting providers;
+- package conventions; or
+- digest values.
+
+Supplying an identity such as `OWNER/REPO@VERSION` does not cause any other field
+to be derived.  `add` performs no release discovery, network access, artifact
+retrieval, or digest calculation.
+
+The existing complete manifest is validated before append construction.  The new
+logical declaration is then validated against the parsed existing state, so an
+identity or destination that duplicates an existing record fails before
+publication.
+
+### Add canonical record form
+
+Only the newly appended bytes are canonicalized.  The new record always uses one
+physical line and this field order:
+
+```text
+id=... url=... dest=... digest=...
+```
+
+No existing record is reformatted, folded, unfolded, reordered, or otherwise
+serialized from parsed state.
+
+### Add append and newline semantics
+
+The new record is appended at absolute EOF.  Existing trailing comments, blank
+lines, whitespace, records, and other valid source bytes therefore remain exactly
+where they were and become an exact prefix of the candidate.
+
+The append line ending is chosen deterministically from the captured original:
+
+1. each observed physical LF or CRLF terminator updates the current convention;
+2. the last observed terminator style is reused for the append; and
+3. LF is used when the manifest contains no observable line terminator, including
+   an empty file or a one-line file without a final terminator.
+
+If a non-empty original does not end with a line terminator, exactly one selected
+line terminator is inserted as a separator before the new record.  If the original
+already ends with a line terminator, no additional separator is inserted.  The new
+record itself always ends with the selected line terminator.
+
+The implementation proves the successful candidate equals:
+
+```text
+captured original bytes + deliberately constructed append bytes
+```
+
+before publication.  It then reparses the complete candidate.  A candidate that
+cannot satisfy this append-only proof or unexpectedly becomes invalid is a status
+5 safety failure.
+
+### Add file mode
+
+With a normal filename, successful `add` is quiet on STDOUT.  The selected
+manifest must already exist as a readable regular non-symlink file; `add` does not
+implicitly create a missing manifest path.  An intentionally empty existing file
+is valid and receives one LF-terminated canonical record.
+
+The complete original is captured before mutation.  Publication uses the same
+staged same-directory replacement discipline as `update`: a detected concurrent
+content change or newly introduced symlink causes failure rather than overwrite,
+and existing file metadata is preserved when ordinary filesystem tools permit it.
+
+### Add stream mode
+
+`add -f -` uses the same mutating stream transaction contract as `update`.
+Recognizable stream syntax causes the complete input to be captured before full
+CLI validation so an invalid declaration can still reproduce the original input.
+
+After complete input capture:
+
+```text
+success -> STDOUT is the complete appended manifest, status 0
+failure -> STDOUT is the complete original manifest, nonzero status
+```
+
+Diagnostics go to STDERR.  Callers must inspect the exit status rather than
+assuming the presence of manifest output means the append succeeded.
+
+Help and version remain informational output and do not consume STDIN.
 
 ## Update Dependency Selection
 
@@ -393,8 +503,8 @@ A successful update therefore preserves all unrelated bytes, including:
 Input containing bytes that cannot make a lossless round trip through the Bash
 string representation, including NUL, is rejected rather than changed.
 
-ADR-021 retains this operation-specific proof approach for later mutation
-commands.  It does not authorize parse-and-reserialize rewriting.
+ADR-021 retains operation-specific proofs for mutation commands.  It does not
+authorize parse-and-reserialize rewriting.
 
 ## Update File Mode
 
@@ -478,8 +588,9 @@ require network/hash capabilities.
 
 Top-level and command-specific help and version information write to STDOUT.
 
-Successful update file mode writes nothing to STDOUT.  Update stream mode reserves
-STDOUT for exactly one complete manifest representation after input capture.
+Successful `update` and `add` file mode writes nothing to STDOUT.  Their stream
+modes reserve STDOUT for exactly one complete manifest representation after input
+capture.
 
 `list` reserves STDOUT for complete identities, one per line.  Because complete
 validation precedes emission, invalid manifests do not intentionally produce a
@@ -503,8 +614,8 @@ The public exit categories are:
 ```
 
 Commands use only categories relevant to their behavior.  `list` normally uses 0,
-2, and 6; it does not report network or hashing failures for capabilities it never
-requires.
+2, and 6.  `add` normally uses 0, 2, 5, and 6.  Neither command reports network or
+hashing failures for capabilities it never requires.
 
 The implementation may use private helper statuses internally, but the public CLI
 must remain within these categories.
@@ -520,42 +631,38 @@ moves genuinely shared behavior into both source closures.
 
 Both products share one project release version and each ships developer,
 comment-stripped, and minified executables with matching `.sha256` companions.
-The addition of `list` does not change the twelve-file release asset contract.
+The `list` and `add` commands do not change the twelve-file release asset contract.
 
 The manager behavior suite is run independently against maintained source and all
 three manager distribution artifacts.
 
-## Future ADR-021 Commands
+## Future ADR-021 Command
 
-ADR-021 defines conservative contracts for future `add` and `remove` commands.
-Those decisions reserve semantics, not current CLI availability.
-
-`add` will require explicit `id=`, `url=`, `dest=`, and `digest=` input and will
-not infer URLs, destinations, artifact names, or digests.  It will append only new
-canonical record bytes while preserving the complete original source as an exact
-prefix.
+ADR-021 defines the conservative contract for future `remove` behavior.  That
+decision reserves semantics, not current CLI availability.
 
 `remove` will select one exact complete identity and delete only that record's
 physical chunk.  Nearby comments and blank lines will remain because the manifest
 grammar does not define comment ownership.
 
-Neither command is advertised by current top-level help until implemented.
+`remove` is not advertised by current top-level help until implemented.
 
 ## Non-Goals
 
 The current manager does not provide:
 
-- implemented `add`, `remove`, or `show` behavior;
+- implemented `remove` or `show` behavior;
 - semantic-version ranges or constraint solving;
 - transitive dependency resolution;
 - package registries;
 - arbitrary hosting-provider discovery;
 - artifact-name inference;
 - destination inference;
+- automatic digest calculation for `add`;
 - JSON output;
 - a public sourceable Bash API;
 - authenticated/private GitHub retrieval; or
 - silent skipping of unsupported dependencies under `update --all`.
 
-ADR-021 governs future `add` and `remove` implementation.  `show` remains outside
-the accepted command set unless a concrete need produces a separate decision.
+ADR-021 governs future `remove` implementation.  `show` remains outside the
+accepted command set unless a concrete need produces a separate decision.
