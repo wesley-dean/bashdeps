@@ -35,7 +35,8 @@ LEGACY_CHECKSUMS := $(DIST_DIR)/SHA256SUMS
 
 TESTS_DIR := tests
 TEST_SCRIPTS := $(TESTS_DIR)/bashdeps.bats $(TESTS_DIR)/wget-capability.bats
-MANAGER_TEST_SCRIPTS := $(TESTS_DIR)/manifest-manager.bats
+MANAGER_TEST_SCRIPTS := $(TESTS_DIR)/manifest-manager.bats \
+	$(TESTS_DIR)/manifest-manager-list.bats
 BUILD_DEPS_TEST := $(TESTS_DIR)/build-deps.bats
 TEST_HELPERS := $(TESTS_DIR)/test_helper.bash
 MANAGER_TEST_HELPERS := $(TESTS_DIR)/manifest-manager-test-helper.bash
