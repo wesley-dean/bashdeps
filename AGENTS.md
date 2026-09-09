@@ -15,16 +15,18 @@ an artifact, its HTTPS retrieval URL, its repository-relative destination, and i
 approved SHA-256 digest.  Byte acceptance is determined by digest equality.
 
 `manifest-manager.bash` is separate maintainer tooling for inspecting validated
-manifest identities and deliberately updating existing bashdeps manifest source.
-It may discover GitHub releases, retrieve candidate artifact bytes, calculate
-proposed SHA-256 digests, and prepare reviewable manifest changes.  It never
-participates in `bashdeps.bash` runtime synchronization or verification.
+manifest identities, appending complete explicit declarations, and deliberately
+updating existing bashdeps manifest source.  Update may discover GitHub releases,
+retrieve candidate artifact bytes, and calculate proposed SHA-256 digests.  Add
+requires all declaration data explicitly and performs no acquisition or hashing.
+The manager never participates in `bashdeps.bash` runtime synchronization or
+verification.
 
 The project deliberately does less than a package manager.  `bashdeps.bash` does
 not resolve versions, discover releases, execute install hooks, build dependency
 graphs, or infer whether an artifact is executable.  The manifest manager's
-read-only `list` and surgical `update` operations do not change that runtime
-boundary.
+read-only `list`, explicit append-only `add`, and surgical `update` operations do
+not change that runtime boundary.
 
 Canonical maintained implementation source is:
 
@@ -37,6 +39,7 @@ lib/manifest-manager/github.bash
 lib/manifest-manager/transaction.bash
 lib/manifest-manager/update.bash
 lib/manifest-manager/list.bash
+lib/manifest-manager/add.bash
 ```
 
 After build dependencies have been prepared, `make build` generates twelve
@@ -73,8 +76,8 @@ work SHALL follow ADR-014.  Repository self-hosting and development-dependency
 work SHALL follow ADR-017.  Build flavor, minification, and release-artifact work
 SHALL follow ADR-018.  Checksum companion naming and legacy sidecar compatibility
 SHALL follow ADR-019.  Manifest-manager architecture, product isolation, and
-surgical update behavior SHALL follow ADR-020.  Manifest-manager `list`, future
-`add`, and future `remove` semantics SHALL follow ADR-021.
+surgical update behavior SHALL follow ADR-020.  Manifest-manager `list`, `add`,
+and future `remove` semantics SHALL follow ADR-021.
 
 Preserve these foundational boundaries:
 
@@ -98,12 +101,14 @@ Preserve these foundational boundaries:
 - manifest-manager changes are proposed source changes, not dynamic runtime trust;
 - manifest-manager `update` preserves unrelated manifest bytes exactly and
   publishes only after a complete requested transaction succeeds;
-- mutating stream mode emits the complete updated manifest on success and the
-  complete captured original manifest on failure after successful input capture;
+- manifest-manager `add` requires explicit `id`, `url`, `dest`, and `digest`
+  fields, infers none of them, and preserves the complete original source as an
+  exact prefix before its canonical append;
+- mutating `update` and `add` stream modes emit the complete candidate manifest on
+  success and the complete captured original on failure after input capture;
 - manifest-manager `list` validates the complete manifest before emitting complete
   logical `id` values and never emits rollback source on failure;
-- `list` does not interpret identities as GitHub package coordinates and requires
-  no network or SHA-256 capability;
+- `list` and `add` require no network or SHA-256 capability;
 - the two executable families are assembled from explicit source inventories;
 - manager-only code and runtime requirements must not leak into `bashdeps.bash`;
 - bashdeps-only runtime code must not leak into `manifest-manager.bash`;
@@ -148,11 +153,13 @@ Do not invent architectural rationale when the repository does not establish it.
 - The maintainer executable name is `manifest-manager.bash`.
 - `bashdeps.bash` operations are `install`, `sync`, `verify`, `help`, and
   `version`.
-- The implemented manifest-manager operations are `update`, `list`, `help`, and
-  `version`; ADR-021 defines future `add` and `remove` contracts that are not yet
-  advertised as implemented commands.
+- The implemented manifest-manager operations are `update`, `add`, `list`,
+  `help`, and `version`; ADR-021 defines the future `remove` contract, which is
+  not yet advertised as implemented.
 - `list` emits complete logical `id` values in manifest order only after complete
   manifest validation.
+- `add` accepts exactly one each of `id=`, `url=`, `dest=`, and `digest=`, appends
+  one canonical logical record at absolute EOF, and never infers missing data.
 - `install` and manifest records use the same named field grammar.
 - Required fields are `id`, `url`, `dest`, and `digest`.
 - Field order is irrelevant.
@@ -161,12 +168,12 @@ Do not invent architectural rationale when the repository does not establish it.
 - The digest grammar is `sha256:` followed by exactly 64 lowercase hexadecimal
   characters.
 - The recommended identity convention is `PACKAGE@VERSION`; identity remains
-  opaque to `bashdeps.bash` and to read-only manager `list`, while `update`
-  interprets a narrow GitHub maintenance form.
+  opaque to `bashdeps.bash`, `list`, and explicit `add`, while `update` interprets
+  a narrow GitHub maintenance form.
 - `bashdeps.bash` downloader selection is `curl`, then usable `wget`, then failure.
-- Manager capabilities are command-specific: `list` needs no network/hash tool,
-  while `update` uses curl and SHA-256 capability when acquisition/hashing is
-  required; the manager does not require `gh` or JSON tooling.
+- Manager capabilities are command-specific: `list` and `add` need no network or
+  hash tool, while `update` uses curl and SHA-256 capability when acquisition or
+  hashing is required; the manager does not require `gh` or JSON tooling.
 - SHA-256 command selection is `sha256sum`, then `shasum -a 256`, then failure.
 - Correct existing bytes require no network request for bashdeps synchronization.
 - Candidate bytes are staged and verified before publication.
@@ -288,11 +295,12 @@ namespace.  Do not create public Bash functions without an architectural decisio
 Do not infer executable mode from filenames, shebangs, URLs, identities, or file
 contents.
 
-Do not normalize or repair a manifest silently.  Invalid declarations fail.
-The manager may parse a logical view for validation and selection, but it must not
-serialize that parsed representation back over the user's source.  `update` uses
-surgical literal substitutions against retained raw bytes; later `add` and
-`remove` must use the operation-specific preservation proofs defined by ADR-021.
+Do not normalize or repair a manifest silently.  Invalid declarations fail.  The
+manager may parse a logical view for validation and selection, but it must not
+serialize that parsed representation back over existing source.  `update` uses
+surgical literal substitutions against retained raw bytes.  `add` preserves the
+complete original as an exact prefix and serializes only its new canonical record.
+Future `remove` must use its operation-specific preservation proof from ADR-021.
 
 Avoid additional external runtime dependencies when Bash builtins or already
 accepted platform utilities implement the behavior clearly and safely.
@@ -379,10 +387,10 @@ semantics there either.
 Features such as semantic-version resolution, registries, transitive dependency
 resolution, recursive manifests, install hooks, authenticated artifact retrieval,
 arbitrary plugins, or package-manager integration remain outside the established
-scope unless a later ADR changes that boundary.  ADR-021 defines future `add` and
-`remove` manifest-manager contracts; neither is implemented until its focused
-phase lands.  `list` is already specified and implemented as read-only complete-ID
-inspection.
+scope unless a later ADR changes that boundary.  ADR-021 defines the future
+`remove` manifest-manager contract.  `list` and `add` are already specified and
+implemented as read-only complete-ID inspection and explicit append-only source
+maintenance, respectively.
 
 A future manifest field such as `mode=0775` is architecturally possible because
 the named-field grammar is extensible, but unknown fields intentionally fail in
@@ -514,6 +522,9 @@ When practical:
 - confirm `verify` tests do not accidentally reach the network;
 - confirm `list` behavior is identical across all manager representations and
   remains network/hash independent;
+- confirm `add` preserves exact original bytes before its append, uses only
+  explicit declaration data, and remains network/hash independent across all
+  manager representations;
 - confirm all generated release artifacts run without the vendor tree or manifest;
 - confirm comment removal and minification do not alter observable behavior; and
 - for documentation-only Bash changes, confirm non-comment lines are unchanged.
@@ -556,7 +567,9 @@ Avoid:
 - minifying source/library fragments before complete program assembly;
 - treating Bash-Minifier exit success as proof of semantic equivalence;
 - changing `bashdeps.bash` to mean the minified flavor;
-- reserializing manifest source as part of a surgical manager update;
+- reserializing existing manifest source as part of a manager mutation;
+- inferring an add URL, artifact name, destination, package convention, or digest
+  from a partial declaration;
 - interpreting `list` identities as package coordinates or emitting a partial list
   before complete manifest validation;
 - applying mutating stream rollback output semantics to read-only `list`;
