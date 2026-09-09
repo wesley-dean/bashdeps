@@ -151,6 +151,11 @@ setup() {
     "digest=sha256:$digest"
   [ "$status" -eq 2 ]
 
+  run manifest_manager_run add \
+    id=acme/tool@v1 url=https://example.test/tool dest=vendor/tool \
+    digest=sha256:ABCDEF
+  [ "$status" -eq 2 ]
+
   [ ! -s dependencies.txt ]
 }
 
@@ -167,6 +172,17 @@ setup() {
   cmp -s before dependencies.txt
 }
 
+@test "add does not implicitly create a missing manifest" {
+  rm -f dependencies.txt
+
+  run manifest_manager_run add \
+    id=acme/tool@v1 url=https://example.test/tool dest=vendor/tool \
+    "digest=sha256:$digest"
+
+  [ "$status" -eq 6 ]
+  [ ! -e dependencies.txt ]
+}
+
 @test "add accepts an alternate manifest filename" {
   : >build-dependencies.txt
 
@@ -175,7 +191,7 @@ setup() {
     "digest=sha256:$digest"
 
   [ "$status" -eq 0 ]
-  [ ! -s dependencies.txt ] || false
+  [ ! -e dependencies.txt ]
   grep -F 'id=acme/tool@v1' build-dependencies.txt
 }
 
