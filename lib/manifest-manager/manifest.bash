@@ -521,69 +521,65 @@ __manifest_manager_split_identity() {
 ## @par STDOUT
 ## Nothing is written to STDOUT.
 ## @par STDERR
-## Nothing is intentionally written to STDERR.
+## A diagnostic identifies an invalid target tag.
 ## @returns Nothing is written to STDOUT.
-## @retval 0 The target tag is safe for the maintenance identity grammar.
-## @retval 1 The tag is empty or contains whitespace or `@`.
+## @retval 0 The tag is suitable for the manager identity convention.
+## @retval 2 The tag is empty or contains whitespace or `@`.
 ## @par Examples
 ## @code
 ## __manifest_manager_validate_target_tag v1.2.3
 ## @endcode
 __manifest_manager_validate_target_tag() {
   local __mm_tag=$1
-  [[ -n $__mm_tag && ! $__mm_tag =~ [[:space:]@] ]]
+
+  [[ -n $__mm_tag && ! $__mm_tag =~ [[:space:]@] ]] || {
+    __manifest_manager_diag "invalid target tag: $__mm_tag"
+    return 2
+  }
 }
 
-## @fn __manifest_manager_identity_matches_url_ref()
-## @brief Tests the accepted compatibility relationship between identity and URL
-## versions.
+## @fn __manifest_manager_is_commit_pin()
+## @brief Tests whether an identity version looks like an immutable commit pin.
 ## @details
-## The initial updater accepts exact equality or exactly one leading `v`
-## difference in either direction.  This keeps existing `id=@0.0.6` with
-## `url=/v0.0.6/` declarations updateable without normalizing either field.
-## @param identity_version Version text from `id`.
-## @param url_ref Ref/tag text parsed from the immutable GitHub URL.
+## ADR-020 excludes 40- and 64-character hexadecimal identity versions from
+## release-update behavior.  The predicate is intentionally lexical and does not
+## query GitHub to reinterpret other version strings.
+## @param version Identity version text to inspect.
 ## @par STDIN
 ## Nothing is read from STDIN.
 ## @par STDOUT
 ## Nothing is written to STDOUT.
 ## @par STDERR
-## Nothing is intentionally written to STDERR.
+## Nothing is written to STDERR.
 ## @returns Nothing is written to STDOUT.
-## @retval 0 The values correspond exactly or by one leading `v`.
-## @retval 1 The values do not satisfy the compatibility rule.
+## @retval 0 The value is a 40- or 64-character hexadecimal commit pin.
+## @retval 1 The value is not classified as a commit pin.
 ## @par Examples
 ## @code
-## __manifest_manager_identity_matches_url_ref 1.2.3 v1.2.3
+## __manifest_manager_is_commit_pin 0123456789012345678901234567890123456789
 ## @endcode
-__manifest_manager_identity_matches_url_ref() {
-  local __mm_identity_version=$1
-  local __mm_url_ref=$2
-
-  [[ $__mm_identity_version == "$__mm_url_ref" ]] && return 0
-  [[ v$__mm_identity_version == "$__mm_url_ref" ]] && return 0
-  [[ $__mm_identity_version == v"$__mm_url_ref" ]] && return 0
-  return 1
+__manifest_manager_is_commit_pin() {
+  local __mm_version=$1
+  [[ $__mm_version =~ ^[0-9A-Fa-f]{40}$ || $__mm_version =~ ^[0-9A-Fa-f]{64}$ ]]
 }
 
 ## @fn __manifest_manager_find_package_record()
-## @brief Resolves one update package name to exactly one parsed record index.
+## @brief Resolves one package name to exactly one existing dependency record.
 ## @details
-## Each identity is interpreted through the manager maintenance convention.
-## Unsupported identities do not match a single-package request.  The requested
-## package must occur exactly once; zero or multiple matches fail rather than
-## guessing which declaration the maintainer intended.
-## @param package Requested `OWNER/REPO` package name.
-## @param index_output Caller variable receiving the zero-based record index.
+## Only identities that satisfy the manager's `OWNER/REPO@VERSION` convention
+## can match.  A missing package or multiple records for the same package fails
+## rather than selecting an arbitrary declaration.
+## @param package GitHub `OWNER/REPO` package requested by the caller.
+## @param index_output Caller variable that receives the matching record index.
 ## @par STDIN
 ## Nothing is read from STDIN.
 ## @par STDOUT
 ## Nothing is written to STDOUT.
 ## @par STDERR
-## A concise diagnostic identifies zero or ambiguous package matches.
+## A diagnostic identifies missing or ambiguous package selection.
 ## @returns Nothing is written to STDOUT.
-## @retval 0 Exactly one record matched and its index was assigned.
-## @retval 2 Selection was missing or ambiguous.
+## @retval 0 Exactly one matching record index was assigned.
+## @retval 2 The package is absent or appears more than once.
 ## @par Examples
 ## @code
 ## __manifest_manager_find_package_record owner/repo index
@@ -591,68 +587,65 @@ __manifest_manager_identity_matches_url_ref() {
 __manifest_manager_find_package_record() {
   local __mm_package=$1
   local __mm_index_output=$2
-  local __mm_index __mm_identity_package __mm_identity_version
-  local __mm_matches=0 __mm_match_index=-1
+  local __mm_loop_index __mm_record_package='' __mm_record_version='' __mm_match=-1
+  local __mm_count=0
 
-  for ((__mm_index = 0; __mm_index < ${#__manifest_manager_ids[@]}; __mm_index++)); do
+  for __mm_loop_index in "${!__manifest_manager_ids[@]}"; do
     if __manifest_manager_split_identity \
-      "${__manifest_manager_ids[__mm_index]}" \
-      __mm_identity_package __mm_identity_version &&
-      [[ $__mm_identity_package == "$__mm_package" ]]; then
-      __mm_matches=$((__mm_matches + 1))
-      __mm_match_index=$__mm_index
+      "${__manifest_manager_ids[__mm_loop_index]}" \
+      __mm_record_package __mm_record_version; then
+      if [[ $__mm_record_package == "$__mm_package" ]]; then
+        __mm_match=$__mm_loop_index
+        __mm_count=$((__mm_count + 1))
+      fi
     fi
   done
 
-  ((__mm_matches == 1)) || {
-    if ((__mm_matches == 0)); then
-      __manifest_manager_diag "dependency package not found: $__mm_package"
-    else
-      __manifest_manager_diag "dependency package is ambiguous: $__mm_package"
-    fi
+  if ((__mm_count == 0)); then
+    __manifest_manager_diag "dependency is not present in the manifest: $__mm_package"
     return 2
-  }
-
-  printf -v "$__mm_index_output" '%s' "$__mm_match_index"
+  fi
+  if ((__mm_count != 1)); then
+    __manifest_manager_diag "dependency package is not unique: $__mm_package"
+    return 2
+  fi
+  printf -v "$__mm_index_output" '%s' "$__mm_match"
 }
 
 ## @fn __manifest_manager_emit_candidate()
-## @brief Writes the complete candidate manifest from preserved raw chunks.
+## @brief Writes a complete candidate from original raw chunks and planned
+## records.
 ## @details
-## Literal chunks are always written byte-for-byte.  A logical record chunk is
-## written from the planned replacement array only when that record index was
-## deliberately updated; otherwise its original raw bytes are emitted exactly.
-## @param output_path Staging path that receives the candidate manifest.
+## Untouched chunks are emitted byte-for-byte.  A changed logical record is
+## replaced only by the exact precomputed candidate raw record at the same
+## index. No parsed field data is serialized during this operation.
+## @param output Complete candidate-manifest path to create.
 ## @par STDIN
 ## Nothing is read from STDIN.
 ## @par STDOUT
 ## Nothing is written to STDOUT.
 ## @par STDERR
-## A diagnostic is written when candidate staging cannot be completed.
+## A diagnostic is written if the candidate file cannot be created completely.
 ## @returns Nothing is written to STDOUT.
-## @retval 0 The complete candidate manifest was written.
-## @retval 6 Candidate output failed.
+## @retval 0 The candidate manifest was written completely.
+## @retval 6 Candidate staging I/O failed.
 ## @par Examples
 ## @code
 ## __manifest_manager_emit_candidate "$__manifest_manager_candidate_file"
 ## @endcode
 __manifest_manager_emit_candidate() {
-  local __mm_output_path=$1
-  local __mm_chunk_index __mm_record_index __mm_value
+  local __mm_output=$1
+  local __mm_chunk_index __mm_kind __mm_record __mm_value
 
-  : >"$__mm_output_path" || {
-    __manifest_manager_diag 'unable to create candidate manifest'
-    return 6
-  }
-
-  for ((__mm_chunk_index = 0; __mm_chunk_index < ${#__manifest_manager_chunk_kinds[@]}; __mm_chunk_index++)); do
-    __mm_record_index=${__manifest_manager_chunk_records[__mm_chunk_index]}
+  : >"$__mm_output" || return 6
+  for __mm_chunk_index in "${!__manifest_manager_chunk_kinds[@]}"; do
+    __mm_kind=${__manifest_manager_chunk_kinds[__mm_chunk_index]}
+    __mm_record=${__manifest_manager_chunk_records[__mm_chunk_index]}
     __mm_value=${__manifest_manager_chunk_values[__mm_chunk_index]}
-    if [[ ${__manifest_manager_chunk_kinds[__mm_chunk_index]} == record &&
-      -n ${__manifest_manager_update_new_raw[__mm_record_index]+x} ]]; then
-      __mm_value=${__manifest_manager_update_new_raw[__mm_record_index]}
+    if [[ $__mm_kind == record && -n ${__manifest_manager_update_new_raw[__mm_record]+set} ]]; then
+      __mm_value=${__manifest_manager_update_new_raw[__mm_record]}
     fi
-    printf '%s' "$__mm_value" >>"$__mm_output_path" || {
+    printf '%s' "$__mm_value" >>"$__mm_output" || {
       __manifest_manager_diag 'unable to stage complete candidate manifest'
       return 6
     }
@@ -660,56 +653,48 @@ __manifest_manager_emit_candidate() {
 }
 
 ## @fn __manifest_manager_reverse_candidate()
-## @brief Reverses every planned record substitution for byte-preservation proof.
+## @brief Reverses planned record substitutions from a reparsed candidate.
 ## @details
-## The complete candidate is read losslessly into a Bash string and each new raw
-## record is replaced once with its old raw record in reverse record order.
-## Reverse order avoids one planned replacement affecting a later old/new pair.
-## The caller compares the reversed result with the captured original file.
-## @param candidate_path Complete candidate manifest staging path.
-## @param output_path File that receives the reversed candidate bytes.
+## The candidate must already have passed manifest parsing.  For every changed
+## record index, the candidate raw record must equal the exact expected new raw
+## bytes before the original raw record is restored.  Unchanged chunks are
+## copied directly.  Comparing the result with the captured original proves that
+## no bytes outside approved raw-record substitutions changed.
+## @param output Proof file that should reproduce the original manifest.
 ## @par STDIN
 ## Nothing is read from STDIN.
 ## @par STDOUT
 ## Nothing is written to STDOUT.
 ## @par STDERR
-## A diagnostic is written when reversal cannot be performed exactly.
+## A diagnostic is written when a candidate record is not the expected new
+## value.
 ## @returns Nothing is written to STDOUT.
-## @retval 0 Every planned replacement reversed exactly once.
-## @retval 5 Reverse substitution could not prove exact preservation.
-## @retval 6 Candidate input or proof output could not be processed.
+## @retval 0 Reverse proof was written from the expected candidate state.
+## @retval 5 A changed candidate record did not match its planned new raw bytes.
+## @retval 6 Proof-file staging I/O failed.
 ## @par Examples
 ## @code
-## __manifest_manager_reverse_candidate candidate.manifest reversed.manifest
+## __manifest_manager_reverse_candidate "$__manifest_manager_stage_dir/reversed"
 ## @endcode
 __manifest_manager_reverse_candidate() {
-  local __mm_candidate_path=$1
-  local __mm_output_path=$2
-  local __mm_candidate='' __mm_line __mm_index __mm_transformed
+  local __mm_output=$1
+  local __mm_chunk_index __mm_kind __mm_record __mm_value
 
-  while IFS= read -r __mm_line || [[ -n $__mm_line ]]; do
-    __mm_candidate+="$__mm_line"
-    if [[ ! -z $__mm_line || -s $__mm_candidate_path ]]; then
-      __mm_candidate+=$'\n'
+  : >"$__mm_output" || return 6
+  for __mm_chunk_index in "${!__manifest_manager_chunk_kinds[@]}"; do
+    __mm_kind=${__manifest_manager_chunk_kinds[__mm_chunk_index]}
+    __mm_record=${__manifest_manager_chunk_records[__mm_chunk_index]}
+    __mm_value=${__manifest_manager_chunk_values[__mm_chunk_index]}
+
+    if [[ $__mm_kind == record && -n ${__manifest_manager_update_new_raw[__mm_record]+set} ]]; then
+      if [[ $__mm_value != "${__manifest_manager_update_new_raw[__mm_record]}" ]]; then
+        __manifest_manager_diag \
+          "candidate record $__mm_record differs from the planned surgical replacement"
+        return 5
+      fi
+      __mm_value=${__manifest_manager_update_old_raw[__mm_record]}
     fi
-  done <"$__mm_candidate_path"
 
-  if [[ -s $__mm_candidate_path && $(tail -c 1 "$__mm_candidate_path" 2>/dev/null | od -An -tu1 | tr -d ' ') != 10 ]]; then
-    __mm_candidate=${__mm_candidate%$'\n'}
-  fi
-
-  for ((__mm_index = ${#__manifest_manager_update_new_raw[@]} - 1; __mm_index >= 0; __mm_index--)); do
-    [[ -n ${__manifest_manager_update_new_raw[__mm_index]+x} ]] || continue
-    __manifest_manager_literal_replace_once \
-      "$__mm_candidate" \
-      "${__manifest_manager_update_new_raw[__mm_index]}" \
-      "${__manifest_manager_update_old_raw[__mm_index]}" \
-      __mm_transformed || {
-      __manifest_manager_diag 'unable to reverse planned manifest substitution'
-      return 5
-    }
-    __mm_candidate=$__mm_transformed
+    printf '%s' "$__mm_value" >>"$__mm_output" || return 6
   done
-
-  printf '%s' "$__mm_candidate" >"$__mm_output_path" || return 6
 }
