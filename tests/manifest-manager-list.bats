@@ -69,10 +69,12 @@ setup() {
     printf '%s\n' 'id=broken url=https://example.test/broken dest=vendor/broken'
   } >dependencies.txt
 
-  run manifest_manager_run list
+  run bash -c 'bash "$1" list >list.out 2>list.err' \
+    _ "$MANIFEST_MANAGER_TEST_EXECUTABLE"
 
   [ "$status" -eq 2 ]
-  [ -z "$output" ]
+  [ ! -s list.out ]
+  [ -s list.err ]
 }
 
 @test "list empty manifest is a successful empty result" {
