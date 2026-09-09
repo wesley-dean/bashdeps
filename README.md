@@ -40,10 +40,12 @@ destinations again.
 `manifest-manager.bash` does not weaken that boundary.  Its `list` command can
 inspect validated complete identities without changing source.  Its `add` command
 can append one complete declaration supplied explicitly by the maintainer without
-acquiring or trusting remote bytes.  Its `update` command can discover a proposed
-GitHub release, retrieve candidate bytes, calculate a proposed digest, and update
-manifest source surgically.  Resulting source changes remain subject to normal
-review and commit before `bashdeps.bash` later treats them as approved input.
+acquiring or trusting remote bytes.  Its `remove` command can delete one exact
+logical dependency record while preserving comments, blank lines, and every other
+source byte.  Its `update` command can discover a proposed GitHub release,
+retrieve candidate bytes, calculate a proposed digest, and update manifest source
+surgically.  Resulting source changes remain subject to normal review and commit
+before `bashdeps.bash` later treats them as approved input.
 
 ## Requirements
 
@@ -83,7 +85,7 @@ The manifest manager requires Bash 4.3 or newer and ordinary Unix-like filesyste
 utilities used for staging and publication.  Additional capabilities are
 command-specific:
 
-- `list` and `add` require no network client or SHA-256 command;
+- `list`, `add`, and `remove` require no network client or SHA-256 command;
 - `update` requires `curl` and `sha256sum` or `shasum -a 256` when release
   discovery, artifact retrieval, or hashing is required.
 
@@ -176,10 +178,10 @@ PACKAGE@VERSION
 
 Bashdeps does not perform semantic-version resolution.
 
-The manifest manager preserves that opacity for `list` output and for explicit
-`add` input.  The `update` command interprets only the narrower GitHub-oriented
-identity shape it needs for release maintenance.  None of these behaviors changes
-runtime manifest semantics.
+The manifest manager preserves that opacity for `list` output, explicit `add`
+input, and exact `remove` selection.  The `update` command interprets only the
+narrower GitHub-oriented identity shape it needs for release maintenance.  None
+of these behaviors changes runtime manifest semantics.
 
 ### URL
 
@@ -400,6 +402,36 @@ line-ending style exists.  If a non-empty manifest lacks a final line terminator
 one selected separator is inserted before the new record.  The new record always
 ends with the selected line terminator.
 
+### Remove a declaration
+
+Remove one dependency by its exact complete `id=` value:
+
+```bash
+manifest-manager.bash remove acme/tool@v1
+```
+
+An alternate manifest may be selected explicitly:
+
+```bash
+manifest-manager.bash remove \
+  --filename dependencies-docs.txt \
+  acme/filter@v2
+```
+
+`remove` treats the identity as opaque data.  It does not strip version text or
+interpret the argument as a GitHub package prefix.  Zero exact matches fail, and
+duplicate identities are rejected as invalid manifest state before mutation.
+
+A successful removal deletes only the selected logical record's physical source
+chunk.  Continued records lose all physical continuation lines that belong to the
+record.  Adjacent comments and blank lines remain unchanged because the manifest
+grammar does not assign them to a dependency.  No separator, line ending, or
+cleanup whitespace is inserted after deletion.
+
+The candidate is proved to equal the original ordered source chunks with exactly
+one selected record omitted, then the complete candidate is reparsed before
+publication.  `remove` requires no network access or digest calculation.
+
 ### Update existing declarations
 
 Update one dependency to the repository's GitHub latest release:
@@ -437,16 +469,12 @@ dependency cannot be updated safely, the entire manifest update fails.
 
 ### Transactional mutation stdin/stdout mode
 
-For `update` and `add`, a filename of `-` reads the complete manifest from standard
-input and writes one complete manifest representation to standard output.  For
-example:
+For `update`, `add`, and `remove`, a filename of `-` reads the complete manifest
+from standard input and writes one complete manifest representation to standard
+output.  For example:
 
 ```bash
-manifest-manager.bash add -f - \
-  id=acme/tool@v1 \
-  url=https://example.test/tool \
-  dest=vendor/tool \
-  digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+manifest-manager.bash remove -f - acme/tool@v1 \
   <dependencies.txt \
   >dependencies.new.txt
 ```
@@ -474,6 +502,10 @@ For `add`, every pre-existing byte remains unchanged and the complete original i
 an exact prefix of the candidate.  Only the newly appended record and any required
 separator line ending are newly serialized.
 
+For `remove`, comments and blank lines remain independent chunks and the candidate
+contains every original chunk except exactly one selected record chunk.  No
+surviving byte is normalized or reformatted.
+
 Successful manager mutations use operation-specific preservation proofs before
 publication.  File-mode publication is staged and occurs only after the complete
 requested operation has succeeded.
@@ -481,10 +513,10 @@ requested operation has succeeded.
 The current update command supports unambiguous GitHub raw-content and
 release-download URL forms.  It fails rather than guessing when the existing URL,
 identity, or artifact relationship cannot be established safely.  `add` likewise
-fails rather than inventing missing declaration data.
+fails rather than inventing missing declaration data, and `remove` requires an
+exact complete identity instead of inferring package semantics.
 
-ADR-021 defines the remaining exact-identity `remove` contract.  It is not
-advertised as an implemented command until its corresponding phase lands.
+ADR-021 governs the complete `list`, `add`, and `remove` command set.
 
 See [Manifest Manager Behavior Specification](doc/manifest-manager-spec.md),
 ADR-020, and ADR-021 for the complete contracts and rationale.
@@ -524,9 +556,9 @@ The `manifest-manager.bash` public exit categories are:
 6  input, staging, filesystem, output, or publication failed
 ```
 
-Commands use only relevant categories.  `list` normally uses 0, 2, and 6;
-`add` normally uses 0, 2, 5, and 6.  Neither requires network or hashing
-capabilities.
+Commands use only relevant categories.  `list` normally uses 0, 2, and 6; `add`
+and `remove` normally use 0, 2, 5, and 6.  These commands require no network or
+hashing capabilities.
 
 A malformed or unterminated continuation is status 2, including a blank/comment
 line where a trailing `\` requires immediate continued record content.
@@ -718,6 +750,7 @@ lib/manifest-manager/transaction.bash
 lib/manifest-manager/update.bash
 lib/manifest-manager/list.bash
 lib/manifest-manager/add.bash
+lib/manifest-manager/remove.bash
 ```
 
 The build uses explicit source inventories for each executable.  Code needed only

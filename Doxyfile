@@ -25,7 +25,8 @@ INPUT                  = src/bashdeps.bash \
                          lib/manifest-manager/transaction.bash \
                          lib/manifest-manager/update.bash \
                          lib/manifest-manager/list.bash \
-                         lib/manifest-manager/add.bash
+                         lib/manifest-manager/add.bash \
+                         lib/manifest-manager/remove.bash
 RECURSIVE              = NO
 FILE_PATTERNS          = *.bash
 

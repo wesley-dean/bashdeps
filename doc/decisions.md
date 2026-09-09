@@ -202,8 +202,8 @@ manager-only code into bashdeps.  See
 The manager grows as a conservative source-maintenance CLI with provider-neutral
 `list`, explicit-field `add`, and exact-identity `remove` contracts while leaving
 `bashdeps.bash` unchanged.  `list` emits complete validated `id` values in manifest
-order; future add/remove mutations preserve unrelated source bytes and use
-operation-specific proofs rather than parse-and-reserialize behavior.  Comments are
-not implicitly owned by adjacent records, and add does not infer URLs,
-destinations, artifact names, or digests.  See
+order; `add` and `remove` preserve unrelated source bytes and use operation-specific
+proofs rather than parse-and-reserialize behavior.  Comments are not implicitly
+owned by adjacent records, and `add` does not infer URLs, destinations, artifact
+names, or digests.  See
 [ADR-021](adr/ADR-021-extend-manifest-manager-with-list-add-and-remove.md).
