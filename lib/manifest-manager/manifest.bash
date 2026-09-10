@@ -16,6 +16,7 @@
 ## @see doc/adr/ADR-002-define-dependency-manifest-grammar.md
 ## @see doc/adr/ADR-015-define-manifest-physical-line-folding.md
 ## @see doc/adr/ADR-020-ship-manifest-manager-and-define-surgical-updates.md
+## @see doc/adr/ADR-023-add-supplemental-upstream-sha256-verification.md
 ## @par Examples
 ## @code
 ## source lib/manifest-manager/manifest.bash
@@ -37,6 +38,14 @@ declare -a __manifest_manager_dests=()
 ## @var __manifest_manager_digests
 ## @brief Validated complete `sha256:` digest declarations in manifest order.
 declare -a __manifest_manager_digests=()
+
+## @var __manifest_manager_digest_urls
+## @brief Optional validated upstream checksum URLs aligned with identities.
+## @details
+## Existing four-field records store an empty string at their aligned index.  This
+## keeps older manifests behaviorally unchanged while allowing update planning to
+## distinguish declarations that explicitly opt into ADR-023 corroboration.
+declare -a __manifest_manager_digest_urls=()
 
 ## @var __manifest_manager_raw_records
 ## @brief Exact physical source bytes for each logical dependency record.
@@ -86,6 +95,7 @@ __manifest_manager_reset_manifest_state() {
   __manifest_manager_urls=()
   __manifest_manager_dests=()
   __manifest_manager_digests=()
+  __manifest_manager_digest_urls=()
   __manifest_manager_raw_records=()
   __manifest_manager_chunk_kinds=()
   __manifest_manager_chunk_values=()
@@ -215,14 +225,13 @@ __manifest_manager_validate_dest_text() {
 }
 
 ## @fn __manifest_manager_parse_record()
-## @brief Parses one folded logical dependency declaration into validated
-## fields.
+## @brief Parses one folded logical dependency declaration into validated fields.
 ## @details
 ## Tokens are separated only by horizontal whitespace and each token is split at
 ## its first `=`.  Exactly one each of `id`, `url`, `dest`, and `digest` is
-## required.  Unknown and duplicate fields fail closed.  The function appends a
-## successful record to the parallel parsed arrays while leaving its raw
-## physical representation under the caller's control.
+## required, and one optional `digest_url` may be present.  Unknown and duplicate
+## fields fail closed.  A successful record appends aligned logical state while
+## leaving its raw physical representation under the caller's control.
 ## @param logical Folded logical dependency record.
 ## @par STDIN
 ## Nothing is read from STDIN.
@@ -236,15 +245,15 @@ __manifest_manager_validate_dest_text() {
 ## @par Examples
 ## @code
 ## __manifest_manager_parse_record \
-##   'id=owner/repo@v1 url=https://example.test/x' \
-##   'dest=vendor/x digest=sha256:...'
+##   'id=owner/repo@v1 url=https://example.test/x dest=vendor/x' \
+##   'digest=sha256:... digest_url=https://example.test/x.sha256'
 ## @endcode
 __manifest_manager_parse_record() {
   local __mm_logical=$1
   local __mm_token __mm_name __mm_value __mm_id='' __mm_url=''
-  local __mm_dest='' __mm_digest=''
+  local __mm_dest='' __mm_digest='' __mm_digest_url=''
   local __mm_seen_id=0 __mm_seen_url=0 __mm_seen_dest=0 __mm_seen_digest=0
-  local __mm_existing
+  local __mm_seen_digest_url=0 __mm_existing
   local -a __mm_tokens
 
   IFS=$' \t' read -r -a __mm_tokens <<<"$__mm_logical"
@@ -298,6 +307,14 @@ __manifest_manager_parse_record() {
         __mm_seen_digest=1
         __mm_digest=$__mm_value
         ;;
+      digest_url)
+        ((__mm_seen_digest_url == 0)) || {
+          __manifest_manager_diag 'duplicate digest_url field'
+          return 2
+        }
+        __mm_seen_digest_url=1
+        __mm_digest_url=$__mm_value
+        ;;
       *)
         __manifest_manager_diag "unknown dependency field: $__mm_name"
         return 2
@@ -313,6 +330,10 @@ __manifest_manager_parse_record() {
     __manifest_manager_diag "dependency $__mm_id has a non-HTTPS url"
     return 2
   }
+  if ((__mm_seen_digest_url)) && [[ $__mm_digest_url != https://* ]]; then
+    __manifest_manager_diag "dependency $__mm_id has a non-HTTPS digest_url"
+    return 2
+  fi
   __manifest_manager_validate_dest_text "$__mm_dest" || {
     __manifest_manager_diag "dependency $__mm_id has an invalid destination: $__mm_dest"
     return 2
@@ -339,6 +360,7 @@ __manifest_manager_parse_record() {
   __manifest_manager_urls+=("$__mm_url")
   __manifest_manager_dests+=("$__mm_dest")
   __manifest_manager_digests+=("$__mm_digest")
+  __manifest_manager_digest_urls+=("$__mm_digest_url")
 }
 
 ## @fn __manifest_manager_parse_manifest()
@@ -509,8 +531,7 @@ __manifest_manager_split_identity() {
 }
 
 ## @fn __manifest_manager_validate_target_tag()
-## @brief Validates target tag text that will become part of a manifest
-## identity.
+## @brief Validates target tag text that will become part of a manifest identity.
 ## @details
 ## The initial CLI forbids empty tags, whitespace, and `@` because those bytes
 ## would make `OWNER/REPO@TAG` ambiguous to the maintenance interface.  No
@@ -613,8 +634,7 @@ __manifest_manager_find_package_record() {
 }
 
 ## @fn __manifest_manager_emit_candidate()
-## @brief Writes a complete candidate from original raw chunks and planned
-## records.
+## @brief Writes a complete candidate from original raw chunks and planned records.
 ## @details
 ## Untouched chunks are emitted byte-for-byte.  A changed logical record is
 ## replaced only by the exact precomputed candidate raw record at the same
@@ -666,8 +686,7 @@ __manifest_manager_emit_candidate() {
 ## @par STDOUT
 ## Nothing is written to STDOUT.
 ## @par STDERR
-## A diagnostic is written when a candidate record is not the expected new
-## value.
+## A diagnostic is written when a candidate record is not the expected new value.
 ## @returns Nothing is written to STDOUT.
 ## @retval 0 Reverse proof was written from the expected candidate state.
 ## @retval 5 A changed candidate record did not match its planned new raw bytes.
