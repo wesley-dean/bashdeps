@@ -30,8 +30,8 @@ local.properties
 # Locally stored "Eclipse launch configurations"
 *.launch
 
-# PyDev specific (Python IDE for Eclipse)
-*.pydevproject
+# PyDev specific (Python IDE)
+.pydevproject
 
 # CDT-specific (C/C++ Development Tooling)
 .cproject
@@ -42,7 +42,7 @@ local.properties
 # Java annotation processor (APT)
 .factorypath
 
-# PDT-specific (PHP Development Tools)
+# PDT-specific
 .buildpath
 
 # sbteclipse plugin
@@ -361,6 +361,7 @@ $RECYCLE.BIN/
 # SonarScanner
 .scannerwork
 
-# Generated Doxygen reference output and downloaded documentation tooling.
+# Generated documentation output and downloaded documentation tooling.
+/doc/adr/README.md
 /doc/reference/
 /vendor/
