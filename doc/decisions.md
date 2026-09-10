@@ -207,3 +207,12 @@ proofs rather than parse-and-reserialize behavior.  Comments are not implicitly
 owned by adjacent records, and `add` does not infer URLs, destinations, artifact
 names, or digests.  See
 [ADR-021](adr/ADR-021-extend-manifest-manager-with-list-add-and-remove.md).
+
+## ADR-022: Publish an Ephemeral Generated ADR Landing Page
+
+Documentation builds compose maintained ADR framing with an adrctl-generated
+linked table of contents into ignored `doc/adr/README.md`, then use that ephemeral
+Markdown file as the Doxygen main page.  The adrctl release is checksum-pinned as
+documentation-only tooling, the generated README is not committed, and normal
+publication deliberately omits ADR relationship graphs.  See
+[ADR-022](adr/ADR-022-publish-an-ephemeral-generated-adr-landing-page.md).

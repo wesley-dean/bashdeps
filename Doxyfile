@@ -1,8 +1,8 @@
 # Doxyfile
 #
-# Doxygen configuration for the maintained Bash source.  The Makefile docs target
-# prepares the manifest-managed Bash preprocessor filter before invoking this
-# configuration.
+# Doxygen configuration for maintained Bash source and repository documentation.
+# The Makefile docs target prepares manifest-managed documentation tooling and an
+# ephemeral ADR landing page before invoking this configuration.
 
 PROJECT_NAME           = "bashdeps"
 PROJECT_BRIEF          = "Exact dependency materialization and manifest maintenance tools"
@@ -26,16 +26,26 @@ INPUT                  = src/bashdeps.bash \
                          lib/manifest-manager/update.bash \
                          lib/manifest-manager/list.bash \
                          lib/manifest-manager/add.bash \
-                         lib/manifest-manager/remove.bash
-RECURSIVE              = NO
-FILE_PATTERNS          = *.bash
+                         lib/manifest-manager/remove.bash \
+                         doc/adr \
+                         doc/decisions.md \
+                         doc/bashdeps-spec.md \
+                         doc/manifest-manager-spec.md \
+                         doc/documentation-standard.md
+RECURSIVE              = YES
+FILE_PATTERNS          = *.bash \
+                         *.md
 
 EXCLUDE                = tests \
                          vendor \
-                         dist
+                         dist \
+                         doc/reference
 EXCLUDE_PATTERNS       = */tests/* \
                          */vendor/* \
-                         */dist/*
+                         */dist/* \
+                         */doc/reference/* \
+                         */README.intro.md \
+                         */README.outro.md
 
 EXTENSION_MAPPING      = bash=C++
 FILTER_PATTERNS        = *.bash=vendor/doxygen-bash.awk
@@ -49,6 +59,7 @@ HIDE_UNDOC_CLASSES     = YES
 OPTIMIZE_OUTPUT_FOR_C  = YES
 MARKDOWN_SUPPORT       = YES
 AUTOLINK_SUPPORT       = YES
+USE_MDFILE_AS_MAINPAGE = doc/adr/README.md
 
 QUIET                  = YES
 WARNINGS               = YES

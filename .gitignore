@@ -362,5 +362,6 @@ $RECYCLE.BIN/
 .scannerwork
 
 # Generated Doxygen reference output and downloaded documentation tooling.
+/doc/adr/README.md
 /doc/reference/
 /vendor/

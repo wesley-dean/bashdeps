@@ -55,13 +55,18 @@ BASHDEPS_URL := https://github.com/wesley-dean/bashdeps/releases/download/v$(BAS
 BASHDEPS_SHA256 := bb6c807fa12c010950bda06172ac0611d278c57aca1f8352f41502d0d76b4e6c
 BASH_MINIFIER := $(VENDOR_DIR)/bash-minifier.bash
 DOXYGEN_BASH_FILTER := $(VENDOR_DIR)/doxygen-bash.awk
+ADRCTL := $(VENDOR_DIR)/adrctl.bash
+ADR_DIR := doc/adr
+ADR_INDEX_FILE := $(ADR_DIR)/README.md
+ADR_INDEX_INTRO := $(ADR_DIR)/README.intro.md
+ADR_INDEX_OUTRO := $(ADR_DIR)/README.outro.md
 REFERENCE_DOC_DIR := doc/reference
 
 VERSION ?= 0.0.0-dev
 BUILD_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')
 BUILD_DATE ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || printf 'unknown')
 
-.PHONY: all build check clean deps deps-check distclean docs docs-clean FORCE format test test-build-deps test-source test-dev test-dist test-min verify-bashdeps
+.PHONY: adr-index all build check clean deps deps-check distclean docs docs-clean FORCE format test test-build-deps test-source test-dev test-dist test-min verify-bashdeps
 
 ## Synchronize development/build dependencies, then build release artifacts.
 ##
@@ -290,15 +295,33 @@ test-min: build
 test-build-deps:
 	bats "$(BUILD_DEPS_TEST)"
 
+## Generate the ephemeral ADR landing page from maintained framing and ADR source.
+##
+## This target consumes prepared adrctl state and never synchronizes dependencies.
+## A same-directory candidate is replaced only after successful generation.
+adr-index:
+	@test -r "$(ADRCTL)" || { \
+		printf '%s\n' 'Missing documentation dependency vendor/adrctl.bash; run make deps first' >&2; \
+		exit 1; \
+	}
+	@test -r "$(ADR_INDEX_INTRO)" && test -r "$(ADR_INDEX_OUTRO)"
+	@tmp="$(ADR_INDEX_FILE).tmp"; \
+	trap 'rm -f "$$tmp"' EXIT; \
+	bash "$(ADRCTL)" generate toc -i "$(ADR_INDEX_INTRO)" -o "$(ADR_INDEX_OUTRO)" >"$$tmp"; \
+	mv "$$tmp" "$(ADR_INDEX_FILE)"; \
+	trap - EXIT
+
 ## Remove generated Doxygen reference documentation.
 docs-clean:
 	rm -rf "$(REFERENCE_DOC_DIR)"
 
-## Generate browsable Doxygen reference documentation from maintained Bash source.
+## Generate browsable Doxygen reference documentation from maintained source.
 ##
-## The filter is manifest-managed data. The documentation consumer applies the
-## executable mode Doxygen needs rather than asking bashdeps to infer file purpose.
+## Documentation dependencies are manifest-managed data. The documentation
+## consumer applies the executable mode Doxygen needs to the Bash filter, then
+## generates the ephemeral ADR main page before invoking Doxygen.
 docs: docs-clean deps
+	$(MAKE) --no-print-directory adr-index
 	chmod 0755 "$(DOXYGEN_BASH_FILTER)"
 	mkdir -p "$(REFERENCE_DOC_DIR)"
 	doxygen Doxyfile
@@ -306,6 +329,7 @@ docs: docs-clean deps
 clean:
 	rm -rf "$(DIST_DIR)"
 
-## Remove ordinary build output, generated reference docs, and generated vendor state.
+## Remove ordinary build output, generated documentation state, and vendor state.
 distclean: clean docs-clean
+	rm -f "$(ADR_INDEX_FILE)"
 	rm -rf "$(VENDOR_DIR)"
