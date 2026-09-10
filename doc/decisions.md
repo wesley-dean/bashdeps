@@ -216,3 +216,14 @@ Markdown file as the Doxygen main page.  The adrctl release is checksum-pinned a
 documentation-only tooling, the generated README is not committed, and normal
 publication deliberately omits ADR relationship graphs.  See
 [ADR-022](adr/ADR-022-publish-an-ephemeral-generated-adr-landing-page.md).
+
+## ADR-023: Add Supplemental Upstream SHA-256 Verification
+
+Dependency declarations may add an explicit HTTPS `digest_url` whose upstream
+SHA-256 value must corroborate newly acquired artifact bytes in addition to the
+mandatory consumer-committed `digest=` value.  The extra check applies only when
+network acquisition is required, so cached correct destinations and `verify`
+remain network-free.  Manifest-manager understands and preserves the optional
+field, accepts it explicitly on `add`, and transforms and verifies an already
+present value during `update` without inferring checksum locations.  See
+[ADR-023](adr/ADR-023-add-supplemental-upstream-sha256-verification.md).
