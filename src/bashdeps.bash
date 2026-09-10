@@ -8,6 +8,11 @@
 ## acquired bytes against committed SHA-256 digests, and materializes only verified
 ## candidates beneath an invocation-selected project-relative destination root.
 ##
+## An optional explicit `digest_url` adds supplemental upstream SHA-256
+## corroboration when artifact acquisition is required.  It never replaces the
+## committed digest, is never inferred from the artifact URL, and is not fetched
+## for already-correct local destinations or by network-free `verify`.
+##
 ## The implementation deliberately separates declaration parsing, runtime capability
 ## selection, acquisition, hashing, filesystem safety, staging, publication, and
 ## command dispatch.  That separation keeps security-sensitive policy visible and
@@ -32,6 +37,7 @@
 ## race resistance against a hostile process changing the filesystem concurrently.
 ## @see doc/bashdeps-spec.md
 ## @see doc/adr/ADR-014-documentation-first-source-code-commenting-standard.md
+## @see doc/adr/ADR-023-add-supplemental-upstream-sha256-verification.md
 ## @par Examples
 ## @code
 ## bash src/bashdeps.bash --help
@@ -89,18 +95,25 @@ __bashdeps_record_dest=''
 ## `sha256:` prefix.  Loaded state stores only that hexadecimal portion.
 __bashdeps_record_digest=''
 
+## @var __bashdeps_record_digest_url
+## @brief Scratch optional HTTPS checksum URL for the record currently being parsed.
+## @details
+## An empty value means the declaration uses the historical four-field contract.
+## When non-empty, the URL is explicit source and is never derived from `url=`.
+__bashdeps_record_digest_url=''
+
 ## @var __bashdeps_ids
 ## @brief Loaded dependency identities in manifest order.
 ## @details
-## This array is kept index-aligned with the URL, destination, and digest arrays.
-## Duplicate identities are rejected before a record is appended.
+## This array is kept index-aligned with the URL, destination, digest, and optional
+## checksum-URL arrays.  Duplicate identities are rejected before a record is
+## appended.
 __bashdeps_ids=()
 
 ## @var __bashdeps_urls
 ## @brief Loaded dependency acquisition URLs in manifest order.
 ## @details
-## Element indexes correspond directly to `__bashdeps_ids`, `__bashdeps_dests`, and
-## `__bashdeps_digests`.
+## Element indexes correspond directly to the other loaded dependency arrays.
 __bashdeps_urls=()
 
 ## @var __bashdeps_dests
@@ -116,6 +129,14 @@ __bashdeps_dests=()
 ## Values omit the manifest's `sha256:` prefix because the selected hash adapters
 ## already produce bare hexadecimal digests for comparison.
 __bashdeps_digests=()
+
+## @var __bashdeps_digest_urls
+## @brief Loaded optional upstream checksum URLs in manifest order.
+## @details
+## The array is index-aligned with all other loaded record arrays.  Four-field
+## declarations contribute an empty string, preserving their existing acquisition
+## behavior without any checksum-resource request.
+__bashdeps_digest_urls=()
 
 ## @var __bashdeps_stage_dir
 ## @brief Active bashdeps-owned candidate staging directory for the current process.
@@ -155,7 +176,14 @@ __bashdeps_dest_root='vendor'
 ## The helper centralizes usage wording so explicit help and usage-error paths show
 ## the same command surface.  Callers that need usage on standard error redirect
 ## this helper rather than maintaining a second copy of the text.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Human-readable CLI usage text is written.
+## @par STDERR
+## Nothing is intentionally written to STDERR.
 ## @returns Human-readable CLI usage text.
+## @retval 0 Usage text was written successfully.
 ## @par Examples
 ## @code
 ## source src/bashdeps.bash
@@ -164,7 +192,7 @@ __bashdeps_dest_root='vendor'
 __bashdeps_usage() {
   printf '%s\n' \
     'Usage:' \
-    '  bashdeps.bash install [--dest-root PATH] id=IDENTITY url=HTTPS_URL dest=RELATIVE_PATH digest=sha256:HEX' \
+    '  bashdeps.bash install [--dest-root PATH] id=IDENTITY url=HTTPS_URL dest=RELATIVE_PATH digest=sha256:HEX [digest_url=HTTPS_URL]' \
     '  bashdeps.bash sync [--dest-root PATH] [MANIFEST]' \
     '  bashdeps.bash verify [--dest-root PATH] [MANIFEST]' \
     '  bashdeps.bash help' \
@@ -178,8 +206,14 @@ __bashdeps_usage() {
 ## one diagnostic line.  Centralizing the prefix makes operational errors easy to
 ## identify without requiring each caller to repeat program-name formatting.
 ## @param message[] Words that form the diagnostic message.
-## @par Standard Error
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
 ## One line beginning with `bashdeps.bash: ` followed by the supplied message.
+## @returns Nothing is written to STDOUT.
+## @retval 0 The diagnostic was written successfully.
 ## @par Examples
 ## @code
 ## source src/bashdeps.bash
@@ -196,6 +230,13 @@ __bashdeps_diag() {
 ## and explicit install arguments can share validation logic.  Resetting every
 ## scratch field before a new parse prevents omitted fields from inheriting values
 ## from a previous record.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## Nothing is written to STDERR.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 The scratch record fields were cleared.
 ## @par Examples
 ## @code
@@ -208,6 +249,7 @@ __bashdeps_reset_record() {
   __bashdeps_record_url=''
   __bashdeps_record_dest=''
   __bashdeps_record_digest=''
+  __bashdeps_record_digest_url=''
 }
 
 ## @fn __bashdeps_validate_path_text()
@@ -221,6 +263,13 @@ __bashdeps_reset_record() {
 ## This helper validates text only.  Symlink and file-type checks are performed
 ## separately against the filesystem before inspection or publication.
 ## @param path Project-relative path text to validate.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## Nothing is written to STDERR.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 The path uses the accepted canonical relative form.
 ## @retval 1 The path is empty, absolute, aliased, traversal-bearing, or contains whitespace.
 ## @par Examples
@@ -255,6 +304,13 @@ __bashdeps_validate_path_text() {
 ## destination validation can evolve without spreading generic path checks through
 ## the parser.
 ## @param dest Project-relative dependency destination to validate.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## Nothing is written to STDERR.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 The destination uses the accepted canonical relative form.
 ## @retval 1 The destination violates the canonical relative-path grammar.
 ## @par Examples
@@ -274,8 +330,13 @@ __bashdeps_validate_dest_text() {
 ## value must still satisfy the canonical relative-path grammar.  Invalid input is
 ## rejected before the global policy changes.
 ## @param root Project-relative root supplied by `--dest-root`.
-## @par Standard Error
-## A diagnostic naming the invalid root when validation fails.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## A diagnostic names the invalid root when validation fails.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 The normalized destination root was stored.
 ## @retval 2 The supplied root is invalid CLI policy.
 ## @par Examples
@@ -307,6 +368,13 @@ __bashdeps_set_dest_root() {
 ## with the selected root followed by `/`.  This permits `vendor/tool` while
 ## rejecting both the root itself and look-alike prefixes such as `vendor-old/tool`.
 ## @param dest Complete project-relative destination to test.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## Nothing is written to STDERR.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 The destination is strictly beneath the selected root.
 ## @retval 1 The destination is outside the root or names the root itself.
 ## @par Examples
@@ -326,15 +394,21 @@ __bashdeps_dest_within_root() {
 ## @brief Validates the complete dependency record held in scratch globals.
 ## @details
 ## A valid record has non-empty identity, URL, destination, and digest fields.  The
-## URL must use HTTPS, the destination must use canonical relative text and remain
-## strictly beneath the selected destination root, and the digest must be
-## `sha256:` followed by exactly 64 lowercase hexadecimal characters.
+## artifact URL must use HTTPS, the destination must use canonical relative text and
+## remain strictly beneath the selected destination root, and the digest must be
+## `sha256:` followed by exactly 64 lowercase hexadecimal characters.  An optional
+## `digest_url` must also use HTTPS when present.
 ##
 ## Identity text remains opaque after non-emptiness is established.  This function
 ## therefore validates declaration syntax and write policy without pretending that
-## labels or URLs prove artifact identity; the digest remains authoritative.
-## @par Standard Error
-## A field-specific diagnostic explaining the first validation failure.
+## labels or URLs prove artifact identity; the committed digest remains authoritative.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## A field-specific diagnostic explains the first validation failure.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 The scratch record is valid for the selected destination policy.
 ## @retval 2 The record is incomplete or contains an invalid URL, destination, or digest.
 ## @par Examples
@@ -344,6 +418,7 @@ __bashdeps_dest_within_root() {
 ## __bashdeps_record_url='https://example.test/tool'
 ## __bashdeps_record_dest='vendor/tool'
 ## __bashdeps_record_digest='sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+## __bashdeps_record_digest_url='https://example.test/tool.sha256'
 ## __bashdeps_validate_record
 ## @endcode
 __bashdeps_validate_record() {
@@ -368,6 +443,10 @@ __bashdeps_validate_record() {
     __bashdeps_diag "dependency $__bashdeps_record_id has a non-HTTPS url"
     return 2
   }
+  if [[ -n $__bashdeps_record_digest_url && $__bashdeps_record_digest_url != https://* ]]; then
+    __bashdeps_diag "dependency $__bashdeps_record_id has a non-HTTPS digest_url"
+    return 2
+  fi
 
   __bashdeps_validate_dest_text "$__bashdeps_record_dest" || {
     __bashdeps_diag "dependency $__bashdeps_record_id has an invalid destination: $__bashdeps_record_dest"
@@ -390,16 +469,21 @@ __bashdeps_validate_record() {
 ## @details
 ## The parser resets prior scratch state, requires each token to contain `=`, and
 ## splits only at the first equals sign so additional equals characters remain data
-## inside values such as URL query strings.  Field order is irrelevant.  Duplicate
-## or unknown field names fail closed, and whitespace inside an already separated
-## token is rejected.
+## inside values such as URL query strings.  Field order is irrelevant.  The four
+## historical fields remain mandatory, `digest_url` is optional, and duplicate or
+## unknown field names fail closed.
 ##
-## Successful parsing leaves the four scratch globals populated and delegates
-## field-specific policy checks to `__bashdeps_validate_record`.  Manifest text is
-## never sourced, evaluated, or sent back through a shell parser.
-## @param fields[] Named `id=`, `url=`, `dest=`, and `digest=` tokens for one record.
-## @par Standard Error
-## A diagnostic describing malformed, duplicate, unknown, or invalid fields.
+## Successful parsing leaves scratch globals populated and delegates field-specific
+## policy checks to `__bashdeps_validate_record`.  Manifest text is never sourced,
+## evaluated, or sent back through a shell parser.
+## @param fields[] Required `id=`, `url=`, `dest=`, and `digest=` tokens plus optional `digest_url=`.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## A diagnostic describes malformed, duplicate, unknown, or invalid fields.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 The declaration was parsed and validated successfully.
 ## @retval 2 The declaration is malformed, incomplete, duplicated, unknown, or invalid.
 ## @par Examples
@@ -409,11 +493,12 @@ __bashdeps_validate_record() {
 ##   'id=tool@1' \
 ##   'url=https://example.test/tool?x=1&y=2' \
 ##   'dest=vendor/tool' \
-##   'digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+##   'digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
+##   'digest_url=https://example.test/tool.sha256'
 ## @endcode
 __bashdeps_parse_tokens() {
   local token key value
-  local seen_id=0 seen_url=0 seen_dest=0 seen_digest=0
+  local seen_id=0 seen_url=0 seen_dest=0 seen_digest=0 seen_digest_url=0
 
   __bashdeps_reset_record
 
@@ -467,6 +552,14 @@ __bashdeps_parse_tokens() {
         seen_digest=1
         __bashdeps_record_digest=$value
         ;;
+      digest_url)
+        ((seen_digest_url == 0)) || {
+          __bashdeps_diag 'duplicate digest_url field'
+          return 2
+        }
+        seen_digest_url=1
+        __bashdeps_record_digest_url=$value
+        ;;
       *)
         __bashdeps_diag "unknown dependency field: $key"
         return 2
@@ -485,8 +578,15 @@ __bashdeps_parse_tokens() {
 ## to detect duplicate identities and destinations before appending a record.
 ## @param needle Exact value to locate.
 ## @param values[] Values to search in order.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## Nothing is written to STDERR.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 At least one value exactly equals the needle.
-## @retval 1 No supplied value equals the needle.
+## @retval 1 No supplied value exactly equals the needle.
 ## @par Examples
 ## @code
 ## source src/bashdeps.bash
@@ -508,18 +608,24 @@ __bashdeps_array_contains() {
 ## Identity and destination uniqueness are set-wide manifest invariants.  This
 ## helper checks both before mutating the parallel arrays, then appends the record
 ## fields at the same index.  The stored digest has its `sha256:` prefix removed so
-## later comparisons can use the raw digest produced by the hash adapter.
+## later comparisons can use the raw digest produced by the hash adapter.  Missing
+## optional `digest_url` values are stored as aligned empty strings.
 ##
 ## The function assumes `__bashdeps_validate_record` has already accepted the
 ## scratch record; it does not repeat field-level syntax checks.
-## @par Standard Error
-## A diagnostic identifying a duplicate dependency identity or destination.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## A diagnostic identifies a duplicate dependency identity or destination.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 The record was appended to every loaded array.
 ## @retval 2 The identity or destination duplicates a previously loaded record.
 ## @par Examples
 ## @code
 ## source src/bashdeps.bash
-## __bashdeps_ids=() __bashdeps_dests=() __bashdeps_urls=() __bashdeps_digests=()
+## __bashdeps_ids=() __bashdeps_dests=() __bashdeps_urls=() __bashdeps_digests=() __bashdeps_digest_urls=()
 ## __bashdeps_parse_tokens 'id=a@1' 'url=https://example.test/a' 'dest=vendor/a' 'digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 ## __bashdeps_append_record
 ## @endcode
@@ -537,6 +643,7 @@ __bashdeps_append_record() {
   __bashdeps_urls+=("$__bashdeps_record_url")
   __bashdeps_dests+=("$__bashdeps_record_dest")
   __bashdeps_digests+=("${__bashdeps_record_digest#sha256:}")
+  __bashdeps_digest_urls+=("$__bashdeps_record_digest_url")
 }
 
 ## @fn __bashdeps_load_manifest()
@@ -552,8 +659,13 @@ __bashdeps_append_record() {
 ## publication.  Duplicate identities and destinations therefore fail before any
 ## dependency candidate is downloaded for that command invocation.
 ## @param manifest Path to the dependency manifest to read.
-## @par Standard Error
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
 ## A diagnostic identifies an unreadable manifest or the line containing an invalid record.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 Every non-comment record was loaded and validated successfully.
 ## @retval 2 The manifest is unreadable or contains an invalid or duplicate record.
 ## @par Examples
@@ -571,6 +683,7 @@ __bashdeps_load_manifest() {
   __bashdeps_urls=()
   __bashdeps_dests=()
   __bashdeps_digests=()
+  __bashdeps_digest_urls=()
 
   [[ -f $manifest && -r $manifest ]] || {
     __bashdeps_diag "manifest is not a readable regular file: $manifest"
@@ -598,8 +711,13 @@ __bashdeps_load_manifest() {
 ## cached selection is reused.  Otherwise `sha256sum` is preferred and `shasum` is
 ## the fallback.  No other command is chosen opportunistically because each
 ## supported adapter has explicit output and invocation semantics.
-## @par Standard Error
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
 ## A diagnostic is written when neither supported SHA-256 command is available.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 A supported hash backend is selected in `__bashdeps_hash_backend`.
 ## @retval 3 No supported SHA-256 implementation is available.
 ## @par Examples
@@ -634,6 +752,12 @@ __bashdeps_select_hash_backend() {
 ## output field must be exactly 64 lowercase hexadecimal characters before it is
 ## accepted as a usable digest.
 ## @param path Local file whose bytes should be hashed.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## The 64-character lowercase SHA-256 digest is written on success.
+## @par STDERR
+## Nothing is intentionally written to STDERR by this helper.
 ## @returns The 64-character lowercase SHA-256 digest followed by a newline.
 ## @retval 0 A valid SHA-256 digest was calculated and written.
 ## @retval 3 The hash backend is unavailable, hashing fails, or output is not a valid digest.
@@ -664,6 +788,77 @@ __bashdeps_hash_file() {
   printf '%s\n' "$digest"
 }
 
+## @fn __bashdeps_parse_checksum_file()
+## @brief Extracts one SHA-256 value from a narrowly formatted checksum resource.
+## @details
+## ADR-023 permits exactly one non-blank checksum entry.  The digest token may be
+## bare or prefixed with `sha256:`; an omitted algorithm defaults to SHA-256.
+## Conventional text or binary-marker filename suffixes are accepted but ignored as
+## trust input.  Other explicit algorithms, multiple entries, comments, and
+## malformed syntax fail closed.  Hexadecimal digest text is normalized to lowercase
+## before comparison.
+## @param path Downloaded checksum-resource path in private staging.
+## @param identity Dependency identity used only for diagnostics.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## The normalized 64-character lowercase SHA-256 digest is written on success.
+## @par STDERR
+## A diagnostic identifies empty, multi-entry, or malformed checksum content.
+## @returns The normalized SHA-256 digest followed by a newline on success.
+## @retval 0 Exactly one supported checksum entry was parsed.
+## @retval 5 The checksum resource was unreadable or syntactically unusable.
+## @par Examples
+## @code
+## digest=$(__bashdeps_parse_checksum_file '.bashdeps-stage/checksum' 'tool@1')
+## @endcode
+__bashdeps_parse_checksum_file() {
+  local path=$1
+  local identity=$2
+  local line='' entry='' digest='' filename=''
+  local nonblank=0
+
+  [[ -f $path && -r $path ]] || {
+    __bashdeps_diag "upstream checksum resource is not readable for: $identity"
+    return 5
+  }
+
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $line == *$'\r' ]]; then
+      line=${line%$'\r'}
+    fi
+    [[ $line =~ ^[[:blank:]]*$ ]] && continue
+
+    nonblank=$((nonblank + 1))
+    if ((nonblank > 1)); then
+      __bashdeps_diag "upstream checksum resource contains multiple entries for: $identity"
+      return 5
+    fi
+    entry=$line
+  done <"$path"
+
+  ((nonblank == 1)) || {
+    __bashdeps_diag "upstream checksum resource is empty for: $identity"
+    return 5
+  }
+
+  if [[ $entry =~ ^(sha256:)?([0-9A-Fa-f]{64})$ ]]; then
+    digest=${BASH_REMATCH[2]}
+  elif [[ $entry =~ ^(sha256:)?([0-9A-Fa-f]{64})[[:blank:]]+\*?(.+)$ ]]; then
+    digest=${BASH_REMATCH[2]}
+    filename=${BASH_REMATCH[3]}
+    [[ $filename =~ [^[:blank:]] ]] || {
+      __bashdeps_diag "upstream checksum filename is empty for: $identity"
+      return 5
+    }
+  else
+    __bashdeps_diag "upstream checksum resource is malformed for: $identity"
+    return 5
+  fi
+
+  printf '%s\n' "${digest,,}"
+}
+
 ## @fn __bashdeps_wget_has_required_controls()
 ## @brief Tests whether the local Wget help surface advertises required controls.
 ## @details
@@ -673,6 +868,13 @@ __bashdeps_hash_file() {
 ## The probe is local and performs no network request.  A nonzero `wget --help`
 ## status is ignored because the advertised text, when present, is the capability
 ## evidence this helper examines.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## Nothing is intentionally written to STDERR.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 Both `-T` and `-t` appear in recognized help forms.
 ## @retval 1 At least one required control is not advertised.
 ## @par Examples
@@ -696,8 +898,13 @@ __bashdeps_wget_has_required_controls() {
 ## local help surface exposes the required timeout and retry-count controls.  This
 ## keeps transport-specific capabilities behind one adapter boundary while avoiding
 ## operating-system assumptions.
-## @par Standard Error
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
 ## A diagnostic is written when neither supported downloader is usable.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 A downloader is selected in `__bashdeps_download_backend`.
 ## @retval 3 No supported HTTPS downloader is available.
 ## @par Examples
@@ -737,6 +944,13 @@ __bashdeps_select_download_backend() {
 ## acceptance happens later and remains independent of transport success.
 ## @param url Declared HTTPS URL to retrieve.
 ## @param candidate Private staging path that should receive transferred bytes.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is intentionally written to STDOUT.
+## @par STDERR
+## Downloader diagnostics may be written by the selected backend.
+## @returns Nothing is intentionally written to STDOUT.
 ## @retval 0 The selected downloader reported a successful transfer.
 ## @retval 3 No supported downloader is selected or the invoked downloader itself returns status 3.
 ## @note Other nonzero downloader exit statuses are propagated to the caller unchanged.
@@ -786,12 +1000,18 @@ __bashdeps_download_once() {
 ##
 ## Status 3 is treated specially because it represents the runtime-capability
 ## category used by backend selection.  After all attempts fail, the helper maps
-## the outcome to the public network-acquisition failure category.  Digest mismatch
-## is intentionally not handled here because transport does not decide byte trust.
+## the outcome to the public network-acquisition failure category.  Integrity
+## verification is intentionally not handled here because transport does not decide
+## byte trust.
 ## @param url Declared HTTPS URL to retrieve.
 ## @param candidate Private staging path used for each attempt.
-## @par Standard Error
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is intentionally written to STDOUT.
+## @par STDERR
 ## A final network-acquisition diagnostic is written after all attempts fail.
+## @returns Nothing is intentionally written to STDOUT.
 ## @retval 0 A transfer attempt succeeded.
 ## @retval 3 A required downloader capability is unavailable or status 3 is propagated.
 ## @retval 4 All permitted transfer attempts failed.
@@ -828,7 +1048,14 @@ __bashdeps_download() {
 ## to the manifest's directory.  `pwd -P` resolves the invocation's current working
 ## directory physically so subsequent relative destination checks share one stable
 ## root string for the duration of the command.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## The physical current working directory is written.
+## @par STDERR
+## Nothing is intentionally written to STDERR.
 ## @returns The physical current working directory followed by a newline.
+## @retval 0 The physical working directory was written successfully.
 ## @par Examples
 ## @code
 ## source src/bashdeps.bash
@@ -853,8 +1080,13 @@ __bashdeps_project_root() {
 ## does not require the destination to exist.
 ## @param root Physical project root for the invocation.
 ## @param dest Canonical project-relative destination to inspect.
-## @par Standard Error
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
 ## A diagnostic identifies symbolic-link traversal or an incompatible file type.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 Existing components satisfy the version 1 path-safety policy.
 ## @retval 6 A symlink, non-directory parent, or non-regular final destination is present.
 ## @par Examples
@@ -906,8 +1138,13 @@ __bashdeps_check_existing_path() {
 ## separate complete-path check before replacement.
 ## @param root Physical project root for the invocation.
 ## @param dest Canonical project-relative destination whose parents should be checked.
-## @par Standard Error
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
 ## A diagnostic identifies a symlink or non-directory parent component.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 Existing parent components are acceptable or absent.
 ## @retval 6 A parent component is a symlink or an existing non-directory.
 ## @par Examples
@@ -950,10 +1187,18 @@ __bashdeps_check_parent_path() {
 ##
 ## This is the central cache-validity rule: filename presence, timestamps, embedded
 ## versions, and file mode do not establish satisfaction.  Only the bytes at a safe
-## destination and their approved digest do.
+## destination and their approved committed digest do.  `digest_url` deliberately
+## does not participate in this local-state check.
 ## @param root Physical project root for the invocation.
 ## @param dest Canonical project-relative destination to inspect.
 ## @param expected Approved 64-character lowercase SHA-256 digest without a prefix.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## Filesystem-safety diagnostics may be written.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 The destination exists safely and its bytes match the approved digest.
 ## @retval 1 The destination is absent or its bytes do not match.
 ## @retval 3 SHA-256 capability is unavailable or hashing fails.
@@ -987,6 +1232,13 @@ __bashdeps_destination_state() {
 ## process-and-random-derived names and creates the first available directory with
 ## mode `0700`, then records that exact path for later cleanup.
 ## @param root Physical project root under which staging should be created.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## A diagnostic is written when staging cannot be allocated.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 A private staging directory was created and recorded.
 ## @retval 6 No staging directory could be allocated after the bounded attempts.
 ## @par Examples
@@ -1020,6 +1272,13 @@ __bashdeps_make_stage() {
 ## ignored during cleanup so they do not replace the command's more meaningful
 ## acquisition, integrity, or publication status.  The in-memory path is cleared
 ## after the attempt.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## Cleanup errors are intentionally suppressed.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 Cleanup completes or no active staging directory is recorded.
 ## @par Examples
 ## @code
@@ -1047,8 +1306,13 @@ __bashdeps_cleanup_stage() {
 ## successfully without filesystem mutation.
 ## @param root Physical project root for the invocation.
 ## @param dest Canonical project-relative destination whose parents may be needed.
-## @par Standard Error
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
 ## A diagnostic identifies unsafe parents or an inability to create the directory tree.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 Parent directories are present and pass the safety checks.
 ## @retval 6 Parent validation or directory creation fails.
 ## @par Examples
@@ -1076,12 +1340,12 @@ __bashdeps_ensure_parent() {
 ## @fn __bashdeps_publish_candidate()
 ## @brief Publishes one already-verified candidate conservatively at its destination.
 ## @details
-## This helper is intentionally downstream of candidate digest verification.  It
-## ensures the parent path exists safely, rechecks the current destination, and
-## allocates a destination-adjacent temporary name so the final replacement can use
-## same-directory rename behavior.  Candidate bytes are copied into that temporary
-## file, assigned mode `0644`, and the destination path is checked again immediately
-## before `mv -f` replaces the final file.
+## This helper is intentionally downstream of all applicable candidate integrity
+## verification.  It ensures the parent path exists safely, rechecks the current
+## destination, and allocates a destination-adjacent temporary name so the final
+## replacement can use same-directory rename behavior.  Candidate bytes are copied
+## into that temporary file, assigned mode `0644`, and the destination path is
+## checked again immediately before `mv -f` replaces the final file.
 ##
 ## Publication does not itself decide whether candidate bytes are trusted and does
 ## not hash them.  Callers must provide a verified staging candidate and perform
@@ -1089,9 +1353,14 @@ __bashdeps_ensure_parent() {
 ## the exact temporary path allocated by this invocation.
 ## @param root Physical project root for the invocation.
 ## @param dest Canonical project-relative final destination.
-## @param candidate Staged candidate whose bytes have already passed digest verification.
-## @par Standard Error
+## @param candidate Staged candidate whose bytes have already passed integrity verification.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
 ## A diagnostic identifies parent, allocation, copy, mode, path-safety, or rename failure.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 The candidate was replaced into the final destination.
 ## @retval 6 Filesystem safety, staging beside the destination, mode setting, or publication fails.
 ## @par Examples
@@ -1153,10 +1422,18 @@ __bashdeps_publish_candidate() {
 ## filesystem-safety failures stop immediately because continuing cannot produce a
 ## trustworthy verification result.
 ##
-## This function performs no downloader selection, acquisition, directory creation,
-## chmod, or publication.  It is the state engine beneath the public `verify`
-## command and the final postcondition check used by `sync`.
+## This function performs no downloader selection, checksum-resource acquisition,
+## directory creation, chmod, or publication.  A declared `digest_url` is ignored
+## after manifest syntax validation because ADR-023 defines it as acquisition-time
+## corroboration rather than a live verification source.
 ## @param root Physical project root for the invocation.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT.
+## @par STDERR
+## Filesystem and hash-capability diagnostics may be written.
+## @returns Nothing is written to STDOUT.
 ## @retval 0 Every loaded destination exists safely and matches its approved digest.
 ## @retval 1 At least one loaded destination is absent or mismatched.
 ## @retval 3 SHA-256 capability is unavailable or hashing fails.
@@ -1197,28 +1474,32 @@ __bashdeps_verify_loaded() {
 ## @details
 ## Synchronization first inspects every loaded destination and records only missing
 ## or mismatched entries as needing acquisition.  If all destinations already match,
-## it returns without requiring a downloader.  Otherwise it selects hashing and
-## download capabilities, creates private staging, and installs an EXIT trap for
-## narrowly scoped cleanup.
+## it returns without requiring a downloader or fetching an optional checksum URL.
+## Otherwise it selects hashing and download capabilities, creates private staging,
+## and installs an EXIT trap for narrowly scoped cleanup.
 ##
-## Every required candidate is downloaded and SHA-256 verified before intentional
-## publication begins.  A single candidate mismatch therefore prevents publication
-## of the entire staged replacement set.  Verified candidates are then published in
-## manifest order, after which all loaded destinations are hashed again.  The final
-## verification proves actual destination state rather than assuming successful copy
-## or rename operations imply the intended bytes are present.
+## Every required artifact candidate is downloaded and compared with the committed
+## SHA-256 digest.  When a record declares `digest_url`, the explicit checksum
+## resource is then downloaded through the same adapter, parsed under ADR-023's
+## narrow grammar, and required to yield the same artifact SHA-256.  All applicable
+## checks for every candidate complete before intentional publication begins.
 ##
-## Whole-set preflight reduces predictable partial updates but does not make
-## multi-file publication globally atomic.  An unpredictable filesystem failure
-## after publication begins can leave a partially updated set; a later sync always
-## derives state from current destination bytes.
+## Verified candidates are published in manifest order, after which all loaded
+## destinations are hashed again against committed digests.  Whole-set preflight
+## reduces predictable partial updates but does not make multi-file publication
+## globally atomic.
 ## @param root Physical project root for the invocation.
-## @par Standard Error
-## Diagnostics identify capability, acquisition, digest, filesystem, or final-verification failures.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT on successful convergence.
+## @par STDERR
+## Diagnostics identify capability, acquisition, integrity, filesystem, or final-verification failures.
+## @returns Nothing is written to STDOUT on success.
 ## @retval 0 Every loaded destination contains its approved bytes after the operation.
 ## @retval 3 A required runtime hash or downloader capability is unavailable.
-## @retval 4 Network acquisition exhausts its permitted attempts.
-## @retval 5 An acquired candidate does not match its approved digest.
+## @retval 4 Artifact or checksum-resource acquisition exhausts its permitted attempts.
+## @retval 5 Acquired integrity verification fails against committed or upstream checksum data.
 ## @retval 6 Filesystem safety, staging, publication, cleanup prerequisite, or final verification fails.
 ## @par Examples
 ## @code
@@ -1228,7 +1509,7 @@ __bashdeps_verify_loaded() {
 ## __bashdeps_sync_loaded "${root}"
 ## @endcode
 __bashdeps_sync_loaded() {
-  local root index state candidate actual
+  local root index state candidate actual checksum upstream
   local -a needed candidates
   root=$1
   needed=()
@@ -1267,6 +1548,19 @@ __bashdeps_sync_loaded() {
       __bashdeps_diag "downloaded bytes do not match approved digest for: ${__bashdeps_ids[index]}"
       return 5
     fi
+
+    if [[ -n ${__bashdeps_digest_urls[index]} ]]; then
+      checksum=$__bashdeps_stage_dir/$index.digest
+      __bashdeps_download "${__bashdeps_digest_urls[index]}" "$checksum" || return $?
+      upstream=$(
+        __bashdeps_parse_checksum_file "$checksum" "${__bashdeps_ids[index]}"
+      ) || return $?
+      if [[ $actual != "$upstream" ]]; then
+        __bashdeps_diag "downloaded bytes do not match upstream checksum for: ${__bashdeps_ids[index]}"
+        return 5
+      fi
+    fi
+
     candidates[index]=$candidate
   done
 
@@ -1295,18 +1589,23 @@ __bashdeps_sync_loaded() {
 ## which is parsed using the same grammar and trust rules as a manifest record.
 ##
 ## The validated scratch record is converted into a one-element loaded dependency
-## set and passed to the common convergence engine.  Existing correct bytes therefore
-## avoid network access, while missing or mismatched bytes follow the same staged,
-## verified publication path as manifest synchronization.
+## set and passed to the common convergence engine.  Existing correct bytes avoid
+## network access, while missing or mismatched bytes follow the same staged,
+## integrity-checked publication path as manifest synchronization.
 ## @param --dest-root= Optional project-relative containment root supplied before fields.
-## @param fields[] One dependency declaration using `id=`, `url=`, `dest=`, and `digest=`.
-## @par Standard Error
+## @param fields[] Four required dependency fields plus optional `digest_url=`.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT on successful installation.
+## @par STDERR
 ## Usage, declaration, capability, acquisition, integrity, and filesystem failures are diagnosed here or by shared helpers.
+## @returns Nothing is written to STDOUT on success.
 ## @retval 0 The declared destination contains the approved bytes.
 ## @retval 2 CLI policy or dependency declaration is invalid.
 ## @retval 3 A required runtime capability is unavailable.
-## @retval 4 Network acquisition fails.
-## @retval 5 Acquired bytes do not match the approved digest.
+## @retval 4 Artifact or checksum-resource network acquisition fails.
+## @retval 5 Acquired integrity verification fails.
 ## @retval 6 Project-root resolution, filesystem safety, staging, publication, or final verification fails.
 ## @par Examples
 ## @code
@@ -1315,7 +1614,8 @@ __bashdeps_sync_loaded() {
 ##   'id=tool@1' \
 ##   'url=https://example.test/tool' \
 ##   'dest=vendor/tool' \
-##   'digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+##   'digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
+##   'digest_url=https://example.test/tool.sha256'
 ## @endcode
 __bashdeps_cmd_install() {
   local root
@@ -1340,6 +1640,7 @@ __bashdeps_cmd_install() {
   __bashdeps_urls=("$__bashdeps_record_url")
   __bashdeps_dests=("$__bashdeps_record_dest")
   __bashdeps_digests=("${__bashdeps_record_digest#sha256:}")
+  __bashdeps_digest_urls=("$__bashdeps_record_digest_url")
   root=$(__bashdeps_project_root) || return 6
   __bashdeps_sync_loaded "$root"
 }
@@ -1353,18 +1654,24 @@ __bashdeps_cmd_install() {
 ## the physical project root is resolved and the shared synchronization engine is
 ## entered.
 ##
-## The loaded engine performs whole-set candidate preflight before publication and
-## never implements synchronization as a shell loop that re-evaluates manifest
-## records as `install` commands.
+## The loaded engine performs whole-set candidate preflight, including any explicitly
+## declared upstream checksum corroboration, before publication and never implements
+## synchronization as a shell loop that re-evaluates manifest records as `install`
+## commands.
 ## @param --dest-root= Optional project-relative containment root supplied before the manifest.
 ## @param manifest Optional manifest path; defaults to `dependencies.txt`.
-## @par Standard Error
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT on successful synchronization.
+## @par STDERR
 ## CLI, manifest, capability, acquisition, integrity, and filesystem failures are diagnosed here or by shared helpers.
+## @returns Nothing is written to STDOUT on success.
 ## @retval 0 Every declared destination contains its approved bytes.
 ## @retval 2 CLI policy or manifest content is invalid.
 ## @retval 3 A required runtime capability is unavailable.
-## @retval 4 Network acquisition fails.
-## @retval 5 Acquired bytes do not match an approved digest.
+## @retval 4 Artifact or checksum-resource network acquisition fails.
+## @retval 5 Acquired integrity verification fails.
 ## @retval 6 Project-root resolution, filesystem safety, staging, publication, or final verification fails.
 ## @par Examples
 ## @code
@@ -1404,14 +1711,19 @@ __bashdeps_cmd_sync() {
 ## project root and inspects current destination bytes through the shared verification
 ## engine.
 ##
-## No downloader is selected and no destination directory, file, mode, staging
-## area, or other managed state is intentionally changed.  Missing or mismatched
-## destinations return the dedicated unsatisfied-verification status rather than
-## being repaired.
+## No downloader is selected and no `digest_url` is fetched.  The optional field is
+## validated as declaration syntax during manifest loading, then ignored for local
+## verification.  No destination directory, file, mode, staging area, or other
+## managed state is intentionally changed.
 ## @param --dest-root= Optional project-relative containment root supplied before the manifest.
 ## @param manifest Optional manifest path; defaults to `dependencies.txt`.
-## @par Standard Error
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Nothing is written to STDOUT on successful verification.
+## @par STDERR
 ## CLI, manifest, hash-capability, and filesystem-safety failures are diagnosed here or by shared helpers.
+## @returns Nothing is written to STDOUT on success.
 ## @retval 0 Every declared destination exists safely and matches its approved digest.
 ## @retval 1 At least one declared destination is absent or mismatched.
 ## @retval 2 CLI policy or manifest content is invalid.
@@ -1454,7 +1766,14 @@ __bashdeps_cmd_verify() {
 ## build date, and source commit identifier on separate lines.  Generated release
 ## artifacts inject these values during `make build`; direct maintained-source use
 ## may report development placeholders.
+## @par STDIN
+## Nothing is read from STDIN.
+## @par STDOUT
+## Three newline-terminated version/build metadata lines are written.
+## @par STDERR
+## Nothing is intentionally written to STDERR.
 ## @returns Three newline-terminated metadata lines: version, build date, and commit.
+## @retval 0 Version information was written successfully.
 ## @par Examples
 ## @code
 ## source src/bashdeps.bash
@@ -1476,20 +1795,23 @@ __bashdeps_cmd_version() {
 ## write concise usage guidance to standard error.
 ##
 ## The dispatcher returns command-handler statuses unchanged, preserving the public
-## categories documented in ADR-007.  The direct-execution guard below this function
-## invokes it only when the file is executed as a process; sourcing the file defines
-## private helpers without automatically dispatching the caller's positional arguments.
+## categories documented in ADR-007 and refined by ADR-023.  The direct-execution
+## guard invokes it only when the file is executed as a process.
 ## @param command Public command or supported help/version alias.
 ## @param arguments[] Remaining arguments for the selected command.
-## @returns Help or version text when those informational commands are selected.
-## @par Standard Error
+## @par STDIN
+## Nothing is read directly by the dispatcher.
+## @par STDOUT
+## Help or version text is written only for the corresponding informational commands.
+## @par STDERR
 ## Missing and unknown commands include a diagnostic plus usage; operational diagnostics come from command handlers.
+## @returns Help or version text when those informational commands are selected.
 ## @retval 0 The selected operation succeeds or help/version output is produced.
 ## @retval 1 Verification completes with one or more absent or mismatched destinations.
 ## @retval 2 CLI usage, manifest syntax, declaration, or destination-root policy is invalid.
 ## @retval 3 A required runtime capability is unavailable or unusable.
-## @retval 4 Network acquisition fails.
-## @retval 5 Acquired bytes fail approved-digest verification.
+## @retval 4 Artifact or checksum-resource network acquisition fails.
+## @retval 5 Acquired integrity verification fails.
 ## @retval 6 Filesystem safety, staging, publication, or related operational handling fails.
 ## @par Examples
 ## @code
