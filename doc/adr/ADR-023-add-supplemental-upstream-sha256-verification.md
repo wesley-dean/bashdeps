@@ -22,6 +22,10 @@ The decision applies to both first-class products:
 - `manifest-manager.bash` understands, preserves, and, where explicitly present,
   updates and verifies `digest_url` while preparing manifest source changes.
 
+Existing four-field manifests remain fully valid and retain their current runtime
+behavior.  Only declarations that explicitly add `digest_url` opt into the new
+corroborating network check.
+
 This ADR refines the four-field manifest grammar established by ADR-002, the
 acquisition semantics in ADR-003 and ADR-004, the runtime exit-status meaning in
 ADR-007, and the manifest-manager update/add contracts in ADR-020 and ADR-021.  It
@@ -64,6 +68,7 @@ request in issue #10.
 ## Decision Drivers
 
 - Preserve the committed manifest digest as the consumer's approval boundary.
+- Preserve behavior and network characteristics for existing four-field manifests.
 - Allow upstream-published checksums to make acquisition stricter without making
   them authoritative.
 - Keep `verify` network-free and deterministic from committed source plus local
@@ -101,6 +106,9 @@ digest_url=HTTPS_URL
 ```
 
 `digest_url` is optional.  When absent, existing four-field behavior is unchanged.
+This backward-compatibility guarantee includes network behavior: a declaration
+without `digest_url` causes no new checksum-resource request and follows the same
+acceptance path as before this decision.
 
 When present, `digest_url` is part of the validated declaration.  It must be
 non-empty, contain no manifest-token whitespace, and begin with `https://` under
@@ -211,7 +219,24 @@ The one non-blank line may use any of these forms:
 sha256:<64-hex-digest>
 <64-hex-digest><horizontal-whitespace><filename-text>
 <64-hex-digest><horizontal-whitespace>*<filename-text>
+sha256:<64-hex-digest><horizontal-whitespace><filename-text>
+sha256:<64-hex-digest><horizontal-whitespace>*<filename-text>
 ```
+
+The algorithm prefix in fetched checksum text is optional.  When no algorithm
+prefix is present, SHA-256 is assumed.  Therefore these checksum tokens are
+semantically equivalent:
+
+```text
+0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+If an algorithm prefix is present, version 1 accepts only `sha256:`.  Any other
+explicit algorithm identifier is rejected rather than ignored, reinterpreted, or
+guessed.  This defaulting rule applies only to checksum data fetched from
+`digest_url`; the committed manifest `digest=` field retains its existing required
+canonical `sha256:` prefix.
 
 The 64 hexadecimal digits are accepted case-insensitively and normalized to
 lowercase before comparison.  The committed `digest=` field remains canonical
@@ -462,7 +487,9 @@ new shared source module solely to remove a small amount of duplication.
 
 ## Consequences
 
-A four-field manifest remains valid and behaves as before.
+Existing four-field manifests remain valid and behaviorally backward-compatible.
+They do not acquire a new network dependency, do not fetch checksum resources, and
+continue to use the committed `digest=` exactly as before.
 
 A declaration with `digest_url` makes fresh or corrective acquisition stricter:
 accepted bytes must agree with both committed consumer trust data and the declared
@@ -488,7 +515,9 @@ The implementation requires negative tests for malformed checksum content,
 multiple checksum entries, checksum mismatch, checksum transport failure, cached
 local state, offline `verify`, transactional multi-record failure, downloader
 fallback behavior, folded manifests, manager surgical updates, stream rollback,
-and optional-field add/remove/list behavior.
+and optional-field add/remove/list behavior.  It also requires regression coverage
+showing that four-field manifests retain their pre-ADR behavior and network access
+patterns.
 
 ## Follow-Ups
 
@@ -505,7 +534,8 @@ that model.
 ## Related Decisions
 
 - Preserves: ADR-001, which defines the committed exact-byte trust boundary.
-- Refines: ADR-002, by adding one optional `digest_url` manifest field.
+- Refines: ADR-002, by adding one optional `digest_url` manifest field while
+  preserving existing four-field declarations unchanged.
 - Refines: ADR-003, by adding supplemental checks during required acquisition while
   preserving cached-state and offline-verify semantics.
 - Refines: ADR-004, by routing checksum acquisition through the existing network
