@@ -36,8 +36,11 @@ MANAGER_MIN_CHECKSUM := $(MANAGER_MIN_ARTIFACT).sha256
 LEGACY_CHECKSUMS := $(DIST_DIR)/SHA256SUMS
 
 TESTS_DIR := tests
-TEST_SCRIPTS := $(TESTS_DIR)/bashdeps.bats $(TESTS_DIR)/wget-capability.bats
+TEST_SCRIPTS := $(TESTS_DIR)/bashdeps.bats \
+	$(TESTS_DIR)/digest-url.bats \
+	$(TESTS_DIR)/wget-capability.bats
 MANAGER_TEST_SCRIPTS := $(TESTS_DIR)/manifest-manager.bats \
+	$(TESTS_DIR)/manifest-manager-digest-url.bats \
 	$(TESTS_DIR)/manifest-manager-list.bats \
 	$(TESTS_DIR)/manifest-manager-add.bats \
 	$(TESTS_DIR)/manifest-manager-remove.bats

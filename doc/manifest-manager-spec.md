@@ -14,7 +14,8 @@ repository's normal review and commit process.
 
 The currently implemented commands are `update`, `list`, `add`, and `remove`.
 ADR-021 defines the relationships and preservation contracts among these
-operations.
+operations.  ADR-023 adds the optional `digest_url` manifest field and defines how
+the manager preserves and verifies it without inferring checksum locations.
 
 ## Runtime Requirements
 
@@ -25,7 +26,8 @@ Capabilities are command-specific:
 
 - `list`, `add`, and `remove` require no network client or SHA-256 command;
 - `update` requires curl and `sha256sum` or `shasum -a 256` when update work
-  requires release discovery, artifact retrieval, or hashing.
+  requires release discovery, artifact retrieval, checksum-resource retrieval, or
+  hashing.
 
 The executable does not require `gh`, `jq`, Git, Python, or `bashdeps.bash`.
 
@@ -40,7 +42,7 @@ The currently implemented public forms are:
 manifest-manager.bash update [OPTIONS] ID [VERSION]
 manifest-manager.bash update [OPTIONS] ID@VERSION
 manifest-manager.bash update [OPTIONS] --all
-manifest-manager.bash add [OPTIONS] id=VALUE url=VALUE dest=VALUE digest=sha256:HEX
+manifest-manager.bash add [OPTIONS] id=VALUE url=VALUE dest=VALUE digest=sha256:HEX [digest_url=HTTPS_URL]
 manifest-manager.bash remove [OPTIONS] ID
 manifest-manager.bash list [OPTIONS]
 manifest-manager.bash help
@@ -76,9 +78,9 @@ manifest commands, but its STDOUT contract depends on the command: `update`,
 read-only data output.
 
 `update --all` cannot be combined with a positional ID or VERSION.  `list` accepts
-no positional arguments.  `add` accepts exactly one each of the four named
-manifest fields and no other positional form.  `remove` accepts exactly one
-complete identity value.
+no positional arguments.  `add` requires exactly one each of the four required
+manifest fields, may accept one explicit `digest_url`, and accepts no other
+positional form.  `remove` accepts exactly one complete identity value.
 
 The executable is non-interactive.
 
@@ -127,8 +129,8 @@ executable as `manifest-manager.bash`.
 
 ## Manifest Grammar
 
-The manager accepts the bashdeps version-1 manifest grammar defined by ADR-002 and
-ADR-015.
+The manager accepts the bashdeps version-1 manifest grammar defined by ADR-002,
+ADR-015, and ADR-023.
 
 Each logical dependency record requires exactly one each of:
 
@@ -139,9 +141,23 @@ dest=VALUE
 digest=sha256:<64-lowercase-hex>
 ```
 
+A record may additionally contain exactly one:
+
+```text
+digest_url=HTTPS_URL
+```
+
+Existing four-field records remain valid.  The optional field is stored in the
+manager's logical view only when explicitly declared; the manager never derives a
+checksum location merely because an artifact URL is present.
+
 Field order is irrelevant.  Blank lines and full-line comments are allowed outside
 an active continuation.  Explicit standalone trailing `\` continuation markers
 fold physical lines exactly as bashdeps defines them.
+
+Both `url` and an explicitly present `digest_url` must use HTTPS.  The committed
+`digest` remains mandatory and canonical as `sha256:` followed by 64 lowercase
+hexadecimal characters.
 
 The manager validates a selected manifest before command-specific work that relies
 on its records.  It never sources, evals, or shell-expands manifest content.
@@ -181,13 +197,15 @@ reduce identities to GitHub package coordinates, or otherwise reinterpret the
 identity.  This keeps the command consistent with the runtime rule that `id` is
 opaque metadata.
 
-The complete selected manifest is parsed and validated before the first identity
-is emitted.  A malformed later record therefore cannot produce a successful or
-partial prefix of list output.
+The complete selected manifest, including optional `digest_url` syntax when
+present, is parsed and validated before the first identity is emitted.  A malformed
+later record therefore cannot produce a successful or partial prefix of list
+output.
 
 A valid empty manifest succeeds and writes nothing.
 
-`list` never reserializes the manifest and never mutates the source path.
+`list` never reserializes the manifest, never mutates the source path, and never
+retrieves a declared `digest_url`.
 
 ### List file mode
 
@@ -210,8 +228,8 @@ failure, STDOUT contains no list data intentionally; diagnostics go to STDERR an
 the command returns nonzero.  STDOUT belongs to the identity list, not a
 transformed source representation.
 
-`list` requires no release discovery, network access, artifact retrieval, or
-SHA-256 implementation.
+`list` requires no release discovery, network access, artifact retrieval, checksum
+retrieval, or SHA-256 implementation.
 
 ## `add`
 
@@ -219,21 +237,24 @@ SHA-256 implementation.
 
 ```text
 manifest-manager.bash add [OPTIONS] \
-  id=VALUE url=VALUE dest=VALUE digest=sha256:HEX
+  id=VALUE url=VALUE dest=VALUE digest=sha256:HEX [digest_url=HTTPS_URL]
 ```
 
-Exactly one each of `id=`, `url=`, `dest=`, and `digest=` is mandatory.  The four
-field arguments may appear in any order.  Each field token is split only at its
-first `=`, so additional equals signs remain part of the field value.
+Exactly one each of `id=`, `url=`, `dest=`, and `digest=` is mandatory.  One
+`digest_url=` may additionally be supplied.  The field arguments may appear in any
+order.  Each field token is split only at its first `=`, so additional equals signs
+remain part of the field value.
 
 Unknown, duplicate, missing, empty, whitespace-bearing, or otherwise invalid
 fields fail with status 2.  The declaration must satisfy the same version-1
-manifest validation rules as a committed record, including HTTPS URL, canonical
-project-relative destination text, and a lowercase 64-hex `sha256:` digest.
+manifest validation rules as a committed record, including HTTPS artifact URL,
+HTTPS `digest_url` when present, canonical project-relative destination text, and
+a lowercase 64-hex `sha256:` committed digest.
 
 `add` does not infer or invent:
 
 - artifact URLs;
+- checksum URLs or sidecar names;
 - artifact filenames;
 - destination paths;
 - repositories or hosting providers;
@@ -241,8 +262,9 @@ project-relative destination text, and a lowercase 64-hex `sha256:` digest.
 - digest values.
 
 Supplying an identity such as `OWNER/REPO@VERSION` does not cause any other field
-to be derived.  `add` performs no release discovery, network access, artifact
-retrieval, or digest calculation.
+to be derived.  Supplying `url=` does not cause `.sha256`, `.256`, release metadata,
+or another checksum location to be guessed.  `add` performs no release discovery,
+network access, artifact retrieval, checksum retrieval, or digest calculation.
 
 The existing complete manifest is validated before append construction.  The new
 logical declaration is then validated against the parsed existing state, so an
@@ -251,11 +273,18 @@ publication.
 
 ### Add canonical record form
 
-Only the newly appended bytes are canonicalized.  The new record always uses one
-physical line and this field order:
+Only the newly appended bytes are canonicalized.  Without `digest_url`, the new
+record retains the historical one-line form and field order:
 
 ```text
 id=... url=... dest=... digest=...
+```
+
+When `digest_url` is explicitly supplied, it is appended after the four required
+fields:
+
+```text
+id=... url=... dest=... digest=... digest_url=...
 ```
 
 No existing record is reformatted, folded, unfolded, reordered, or otherwise
@@ -337,6 +366,10 @@ exact matches fail with status 2.  Duplicate identities are already invalid unde
 the version-1 manifest grammar, so a manifest containing multiple records with the
 same ID also fails before mutation.
 
+A record containing `digest_url` is removed in exactly the same way as a four-field
+record.  The field disappears only because the complete selected physical record
+is removed; no checksum resource is retrieved.
+
 ### Remove physical-record semantics
 
 A successful removal deletes exactly the selected logical record's complete
@@ -397,7 +430,7 @@ Diagnostics go to STDERR.  Callers must inspect the exit status.  Help and versi
 remain informational output and do not consume STDIN.
 
 `remove` requires no provider interpretation, release discovery, network access,
-artifact retrieval, or SHA-256 implementation.
+artifact retrieval, checksum retrieval, or SHA-256 implementation.
 
 ## Update Dependency Selection
 
@@ -429,7 +462,8 @@ wesley-dean/bash-doxygen@0.0.6
 The selected package must appear exactly once.  Zero matches or multiple records
 with the same package prefix fail.
 
-`update` does not add a missing dependency.
+`update` does not add a missing dependency and does not add `digest_url` to a
+record that does not already declare it.
 
 ## Update Version Selection
 
@@ -455,7 +489,8 @@ manifest-manager.bash update OWNER/REPO@TAG
 - enumerate or sort tags; or
 - require the tag to have a GitHub Release object.
 
-The derived artifact URL must still retrieve successfully.
+The derived artifact URL, and derived checksum URL when an existing `digest_url`
+is present, must still retrieve successfully.
 
 A target tag cannot contain whitespace or `@`, because the resulting
 `OWNER/REPO@TAG` identity would not be unambiguous for this maintenance interface.
@@ -494,7 +529,7 @@ The manager does not call the GitHub REST API or parse JSON to perform this look
 
 ## Existing Identity and URL Relationship
 
-The initial update implementation recognizes these immutable GitHub URL families:
+The update implementation recognizes these immutable GitHub URL families:
 
 ```text
 https://raw.githubusercontent.com/OWNER/REPO/REF/ARTIFACT_PATH
@@ -530,26 +565,56 @@ A raw-content URL cannot be updated to a tag containing `/` because the ref/path
 boundary would be ambiguous.  Unsupported URL forms fail rather than trigger URL
 or artifact inference.
 
+When a record already contains `digest_url`, that URL must independently satisfy
+the same supported URL-family, package, and current-version relationship.  The
+manager changes only its recognized REF/TAG component to the exact target tag.  It
+does not infer a checksum filename, append `.sha256`, fall back to `.256`, or
+construct a new checksum URL from the artifact URL.
+
+A record whose artifact URL is updateable but whose declared `digest_url` cannot be
+transformed safely fails before update network work rather than silently dropping
+or ignoring the checksum contract.
+
 ## Candidate Artifact and Digest
 
-For one selected update record, the manager:
+For one selected update record without `digest_url`, the manager retains its
+historical behavior:
 
-1. replaces only the recognized current URL ref/tag with the exact target tag to
-   construct a candidate artifact URL;
+1. replaces only the recognized current artifact URL ref/tag with the exact target
+   tag to construct a candidate artifact URL;
 2. downloads that artifact into private staging;
 3. calculates SHA-256 over the exact downloaded bytes; and
 4. prepares a `sha256:` digest value from that result.
 
-Downloaded artifacts are never executed.
+For one selected record that already declares `digest_url`, the manager additionally:
 
-If the target URL is identical to the existing immutable URL but the downloaded
-bytes do not match the currently committed digest, the update fails.  This avoids
-silently authorizing changed bytes at a location the manifest already described
-as immutable.
+1. replaces only that checksum URL's recognized current ref/tag with the exact
+   target tag;
+2. downloads the checksum resource into private staging;
+3. parses exactly one accepted SHA-256 value from the resource; and
+4. requires the downloaded artifact SHA-256 to equal that upstream value before
+   proposing the new committed digest.
+
+The checksum grammar is the same narrow ADR-023 grammar used by bashdeps runtime:
+a bare 64-hex token defaults to SHA-256, `sha256:` may be explicit, conventional
+filename text may follow, hexadecimal comparison is case-insensitive, and
+multiple non-blank entries, malformed input, or another explicit algorithm fail
+closed.  Filename text is opaque and is not used as trust input.
+
+Downloaded artifacts and checksum resources are never executed.  The upstream
+checksum is corroborating live data only; review and commit of the proposed
+`digest=` remain the authorization boundary.
+
+If the target artifact URL is identical to the existing immutable URL but the
+downloaded bytes do not match the currently committed digest, the update fails.
+This avoids silently authorizing changed bytes at a location the manifest already
+described as immutable.  When `digest_url` is present, a same-target operation also
+retrieves and verifies that checksum resource before reporting a successful no-op.
 
 ## Surgical Update Mutation Contract
 
-For each selected dependency, `update` may change only these field values:
+For a selected dependency without `digest_url`, `update` may change only these
+field values:
 
 ```text
 id
@@ -557,11 +622,24 @@ url
 digest
 ```
 
-`dest` is never changed.
+For a selected dependency that already declares `digest_url`, `update` may also
+change that field's value:
+
+```text
+digest_url
+```
+
+`dest` is never changed, and `update` never inserts a previously absent
+`digest_url`.
 
 The old complete value for each field that needs to change must occur exactly once
 inside the selected raw record.  An absent value or a value appearing multiple
 times is a preservation failure.
+
+Checksum URL replacement is planned before artifact URL replacement because a
+conventional checksum URL may contain the complete artifact URL as a literal
+prefix, such as `tool` and `tool.sha256`.  This ordering preserves the exact-once
+proof for the shorter artifact URL without weakening the substitution rule.
 
 The updated raw record then replaces the original raw record exactly once in the
 complete captured manifest.
@@ -614,7 +692,7 @@ hostile concurrent local process.
 ## Update Stream Mode
 
 `update -f -` reads the complete manifest from STDIN before release discovery,
-artifact retrieval, hashing, or mutation.
+artifact retrieval, checksum retrieval, hashing, or mutation.
 
 After complete input capture:
 
@@ -654,15 +732,18 @@ STDIN.
 Before network access, it verifies that every record:
 
 - uses an unambiguous GitHub `OWNER/REPO@VERSION` maintenance identity;
-- maps to a unique package; and
-- is not commit-pinned.
+- maps to a unique package;
+- is not commit-pinned;
+- has an updateable artifact URL; and
+- when `digest_url` is present, has an independently updateable checksum URL under
+  the same package/current-version relationship.
 
 For every selected dependency, the target is its GitHub latest release as defined
 above.
 
-All release discovery, artifact retrieval, hashing, surgical mutation, and final
-preservation checks complete before one output/publication step.  A failure in any
-record fails the entire transaction.
+All release discovery, artifact retrieval, hashing, declared checksum retrieval and
+verification, surgical mutation, and final preservation checks complete before one
+output/publication step.  A failure in any record fails the entire transaction.
 
 Unsupported records are not silently skipped.
 
@@ -691,16 +772,21 @@ The public exit categories are:
 
 ```text
 0  success, help, version, or successful no-op
-2  invalid CLI, manifest, dependency selection, or declaration
+2  invalid CLI, manifest, dependency selection, declaration, or unsupported update relationship
 3  required runtime capability unavailable or unusable
 4  latest-release discovery or network acquisition failed
-5  exact-mutation or preservation safety check failed
+5  integrity, exact-mutation, or preservation safety check failed
 6  input, staging, filesystem, output, or publication failed
 ```
 
+For `update`, status 4 includes failure to retrieve a declared checksum resource.
+Status 5 includes a malformed, empty, multi-entry, or unsupported-algorithm
+checksum resource and a checksum value that disagrees with the downloaded artifact.
+
 Commands use only categories relevant to their behavior.  `list` normally uses 0,
-2, and 6.  `add` and `remove` normally use 0, 2, 5, and 6.  These commands do not
-report network or hashing failures for capabilities they never require.
+2, and 6.  `add` and `remove` normally use 0, 2, 5, and 6.  These commands validate
+`digest_url` syntax when encountered but do not retrieve it and therefore do not
+report network or hashing failures for that field.
 
 The implementation may use private helper statuses internally, but the public CLI
 must remain within these categories.
@@ -716,17 +802,17 @@ moves genuinely shared behavior into both source closures.
 
 Both products share one project release version and each ships developer,
 comment-stripped, and minified executables with matching `.sha256` companions.
-The `list`, `add`, and `remove` commands do not change the twelve-file release
-asset contract.
+The `digest_url` feature does not change the twelve-file release asset contract.
 
 The manager behavior suite is run independently against maintained source and all
 three manager distribution artifacts.
 
 ## ADR-021 Command Set
 
-ADR-021 defines the implemented conservative contracts for `list`, `add`, and
-`remove`.  The commands share validated parsing and lifecycle infrastructure while
-retaining operation-specific output and preservation proofs:
+ADR-021 defines the conservative contracts for `list`, `add`, and `remove`, with
+ADR-023 refining only their understanding of the optional manifest field.  The
+commands share validated parsing and lifecycle infrastructure while retaining
+operation-specific output and preservation proofs:
 
 - `list` validates completely before emitting opaque identity values;
 - `add` preserves the original source as an exact prefix followed only by its
@@ -746,6 +832,8 @@ The current manager does not provide:
 - package registries;
 - arbitrary hosting-provider discovery;
 - artifact-name inference;
+- checksum-URL or checksum-filename inference;
+- aggregate checksum-file entry selection;
 - destination inference;
 - automatic digest calculation for `add`;
 - automatic comment cleanup for `remove`;

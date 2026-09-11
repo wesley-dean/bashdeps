@@ -73,8 +73,14 @@ manifest_manager_sha256_of() {
 
 manifest_manager_record() {
   local package=$1 version=$2 url=$3 dest=$4 digest=$5
-  printf 'id=%s@%s url=%s dest=%s digest=sha256:%s\n' \
+  local digest_url=${6:-}
+
+  printf 'id=%s@%s url=%s dest=%s digest=sha256:%s' \
     "$package" "$version" "$url" "$dest" "$digest"
+  if [[ -n $digest_url ]]; then
+    printf ' digest_url=%s' "$digest_url"
+  fi
+  printf '\n'
 }
 
 manifest_manager_map() {

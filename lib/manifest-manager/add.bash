@@ -4,19 +4,22 @@
 ## @brief Implements explicit append-only manifest dependency creation.
 ## @details
 ## The `add` command accepts exactly one complete declaration through the
-## manifest's four named fields and appends a canonical one-line record without
-## changing any pre-existing manifest byte.  Existing source is parsed and
-## validated first, the new declaration is validated against that state, and the
-## complete candidate is reparsed before publication.
+## manifest's four required named fields plus an optional explicit `digest_url`
+## and appends a canonical one-line record without changing any pre-existing
+## manifest byte.  Existing source is parsed and validated first, the new
+## declaration is validated against that state, and the complete candidate is
+## reparsed before publication.
 ##
 ## The command performs no release discovery, network access, artifact-name
-## inference, destination inference, or digest calculation.  A caller must supply
-## the complete `id=`, `url=`, `dest=`, and `digest=` values explicitly.
+## inference, destination inference, digest calculation, or checksum-URL
+## inference.  A caller must supply the complete required values explicitly and
+## may supply `digest_url=` explicitly when upstream corroboration is desired.
 ##
 ## Append preservation is operation-specific under ADR-021.  The candidate must
 ## equal the captured original byte-for-byte followed only by the deliberately
 ## constructed separator and canonical record bytes.
 ## @see doc/adr/ADR-021-extend-manifest-manager-with-list-add-and-remove.md
+## @see doc/adr/ADR-023-add-supplemental-upstream-sha256-verification.md
 ## @see doc/manifest-manager-spec.md
 ## @par Examples
 ## @code
@@ -24,7 +27,8 @@
 ##   id=acme/tool@v1 \
 ##   url=https://example.test/tool \
 ##   dest=vendor/tool \
-##   digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+##   digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+##   digest_url=https://example.test/tool.sha256
 ## @endcode
 
 ## @var __manifest_manager_add_filename
@@ -47,12 +51,19 @@ __manifest_manager_add_dest=''
 ## @brief Complete explicit `sha256:` digest value supplied to `add`.
 __manifest_manager_add_digest=''
 
+## @var __manifest_manager_add_digest_url
+## @brief Optional explicit HTTPS checksum URL supplied to `add`.
+## @details
+## An empty value means the caller did not opt the new record into ADR-023
+## acquisition-time corroboration.  The add command never derives this value.
+__manifest_manager_add_digest_url=''
+
 ## @fn __manifest_manager_add_usage()
 ## @brief Writes complete public help for the `add` subcommand.
 ## @details
-## The help text documents mandatory explicit fields, filename selection,
-## append/newline semantics, transactional stream behavior, and the public exit
-## categories relevant to append-only mutation.
+## The help text documents mandatory explicit fields, the optional checksum URL,
+## filename selection, append/newline semantics, transactional stream behavior,
+## and the public exit categories relevant to append-only mutation.
 ## @par STDIN
 ## Nothing is read from STDIN.
 ## @par STDOUT
@@ -70,7 +81,7 @@ __manifest_manager_add_usage() {
   cat <<'USAGE'
 Usage:
   manifest-manager.bash add [OPTIONS] \
-    id=VALUE url=VALUE dest=VALUE digest=sha256:HEX
+    id=VALUE url=VALUE dest=VALUE digest=sha256:HEX [digest_url=HTTPS_URL]
 
 Options:
   -f, --filename FILE    Select a manifest; FILE '-' reads STDIN and writes STDOUT.
@@ -78,17 +89,18 @@ Options:
   -V, --version          Show version/build information and exit successfully.
 
 Declaration:
-  Exactly one each of id=, url=, dest=, and digest= is required.  Field order is
-  arbitrary.  Values are used exactly as supplied after manifest validation.
-  add does not infer URLs, artifact names, destinations, package conventions, or
-  digests, and it performs no network access or digest calculation.
+  Exactly one each of id=, url=, dest=, and digest= is required.  One optional
+  digest_url= may also be supplied.  Field order is arbitrary.  Values are used
+  exactly as supplied after manifest validation.  add does not infer URLs,
+  checksum URLs, artifact names, destinations, package conventions, or digests,
+  and it performs no network access or digest calculation.
 
 Append behavior:
   Existing manifest bytes remain an exact prefix of the candidate.  One canonical
-  record is appended at absolute EOF in field order: id, url, dest, digest.  The
-  last observed LF/CRLF line-ending style is reused; LF is used when none exists.
-  A missing final line terminator is supplied before the new record.  The new
-  record always ends with the selected line terminator.
+  record is appended at absolute EOF in field order: id, url, dest, digest, then
+  digest_url when supplied.  The last observed LF/CRLF line-ending style is reused;
+  LF is used when none exists.  A missing final line terminator is supplied before
+  the new record.  The new record always ends with the selected line terminator.
 
 Stream mode:
   With -f -, STDIN is captured completely before mutation.  Success writes the
@@ -106,11 +118,12 @@ USAGE
 ## @fn __manifest_manager_parse_add_cli()
 ## @brief Parses one explicit add request without reading manifest input.
 ## @details
-## Exactly one of each named manifest field is accepted.  Field order is
-## arbitrary and values may contain additional `=` characters because each token
-## is split only at its first equals sign.  Empty or whitespace-bearing values
-## fail before candidate construction so an argument cannot inject another
-## logical or physical manifest token.  Unknown and duplicate fields fail closed.
+## Exactly one of each required named manifest field is accepted, with at most
+## one optional `digest_url`.  Field order is arbitrary and values may contain
+## additional `=` characters because each token is split only at its first equals
+## sign.  Empty or whitespace-bearing values fail before candidate construction
+## so an argument cannot inject another logical or physical manifest token.
+## Unknown and duplicate fields fail closed.
 ## @param args[] Arguments following the public `add` subcommand.
 ## @par STDIN
 ## Nothing is read from STDIN.
@@ -124,18 +137,20 @@ USAGE
 ## @par Examples
 ## @code
 ## __manifest_manager_parse_add_cli id=tool@1 url=https://example.test/tool \
-##   dest=vendor/tool digest=sha256:0123...
+##   dest=vendor/tool digest=sha256:0123... \
+##   digest_url=https://example.test/tool.sha256
 ## @endcode
 __manifest_manager_parse_add_cli() {
   local __mm_filename_count=0 __mm_arg __mm_name __mm_value
   local __mm_seen_id=0 __mm_seen_url=0 __mm_seen_dest=0 __mm_seen_digest=0
-  local __mm_options=1
+  local __mm_seen_digest_url=0 __mm_options=1
 
   __manifest_manager_add_filename=dependencies.txt
   __manifest_manager_add_id=''
   __manifest_manager_add_url=''
   __manifest_manager_add_dest=''
   __manifest_manager_add_digest=''
+  __manifest_manager_add_digest_url=''
 
   while (($#)); do
     __mm_arg=$1
@@ -226,6 +241,14 @@ __manifest_manager_parse_add_cli() {
         __mm_seen_digest=1
         __manifest_manager_add_digest=$__mm_value
         ;;
+      digest_url)
+        ((__mm_seen_digest_url == 0)) || {
+          __manifest_manager_diag 'add digest_url field was specified more than once'
+          return 2
+        }
+        __mm_seen_digest_url=1
+        __manifest_manager_add_digest_url=$__mm_value
+        ;;
       *)
         __manifest_manager_diag "unknown add field: $__mm_name"
         return 2
@@ -249,6 +272,10 @@ __manifest_manager_parse_add_cli() {
     __manifest_manager_diag 'add url must use HTTPS'
     return 2
   }
+  if ((__mm_seen_digest_url)) && [[ $__manifest_manager_add_digest_url != https://* ]]; then
+    __manifest_manager_diag 'add digest_url must use HTTPS'
+    return 2
+  fi
   __manifest_manager_validate_dest_text "$__manifest_manager_add_dest" || {
     __manifest_manager_diag \
       "add destination is invalid: $__manifest_manager_add_dest"
@@ -448,6 +475,9 @@ __manifest_manager_add_transaction() {
     "$__manifest_manager_add_url" \
     "$__manifest_manager_add_dest" \
     "$__manifest_manager_add_digest"
+  if [[ -n $__manifest_manager_add_digest_url ]]; then
+    __mm_record+=" digest_url=$__manifest_manager_add_digest_url"
+  fi
 
   __manifest_manager_parse_record "$__mm_record" || return $?
   __manifest_manager_add_detect_layout \
