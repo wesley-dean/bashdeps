@@ -1552,9 +1552,7 @@ __bashdeps_sync_loaded() {
     if [[ -n ${__bashdeps_digest_urls[index]} ]]; then
       checksum=$__bashdeps_stage_dir/$index.digest
       __bashdeps_download "${__bashdeps_digest_urls[index]}" "$checksum" || return $?
-      upstream=$(
-        __bashdeps_parse_checksum_file "$checksum" "${__bashdeps_ids[index]}"
-      ) || return $?
+      upstream=$(__bashdeps_parse_checksum_file "$checksum" "${__bashdeps_ids[index]}") || return $?
       if [[ $actual != "$upstream" ]]; then
         __bashdeps_diag "downloaded bytes do not match upstream checksum for: ${__bashdeps_ids[index]}"
         return 5
