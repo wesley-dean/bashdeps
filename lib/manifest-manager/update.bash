@@ -312,10 +312,7 @@ __manifest_manager_plan_record_update() {
   if [[ -n $__mm_current_digest_url ]]; then
     __mm_checksum=$__manifest_manager_stage_dir/checksum.$__mm_index
     __manifest_manager_download_candidate "$__mm_new_digest_url" "$__mm_checksum" || return $?
-    __mm_upstream_hash=$(
-      __manifest_manager_parse_checksum_file \
-        "$__mm_checksum" "${__manifest_manager_ids[__mm_index]}"
-    ) || return $?
+    __mm_upstream_hash=$(__manifest_manager_parse_checksum_file "$__mm_checksum" "${__manifest_manager_ids[__mm_index]}") || return $?
     if [[ $__mm_hash != "$__mm_upstream_hash" ]]; then
       __manifest_manager_diag \
         "downloaded bytes do not match upstream checksum for: ${__manifest_manager_ids[__mm_index]}"
