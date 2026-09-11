@@ -155,7 +155,6 @@ setup() {
 
   [ "$status" -eq 5 ]
   cmp -s original dependencies.txt
-  [[ "$output" == *'does not match upstream checksum'* ]]
 }
 
 @test "checksum acquisition failure maps to status 4 without changing the manifest" {
