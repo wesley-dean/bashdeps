@@ -5,14 +5,20 @@ project can therefore use more than one dependency manifest when different
 repository operations need different external artifacts.
 
 This is a consumer orchestration pattern rather than a change to the bashdeps
-manifest grammar.  Individual dependency records still use the same four fields:
+manifest grammar.  Individual dependency records still use the same four required
+fields and may use the optional `digest_url` field defined by ADR-023:
 
 ```text
 id=...
 url=...
 dest=...
 digest=sha256:...
+digest_url=https://...   # optional
 ```
+
+Existing four-field records remain valid.  `digest_url` is not dependency-role
+metadata; it is an explicit upstream checksum location that adds acquisition-time
+corroboration when a consumer chooses to declare it.
 
 Do not add fields such as `type=`, `dev=`, or `scope=` merely to distinguish why a
 dependency exists.  Current bashdeps releases reject unknown fields deliberately.
@@ -47,7 +53,8 @@ dependencies-test.txt
 
 This keeps a build from acquiring documentation or test dependencies it does not
 consume, while retaining the same exact URL-and-digest trust model for every
-artifact.
+artifact.  Any record may independently opt into an explicit `digest_url`; bashdeps
+does not infer checksum locations from which manifest contains the record.
 
 For example, a documentation manifest might contain:
 
@@ -94,7 +101,8 @@ verified bootstrap described in the README's consumer Make integration example.
 
 `deps` and `deps-docs` may use the network because `sync` may need to acquire
 missing or stale artifacts.  Their corresponding `*-check` targets use `verify`
-and should remain offline and non-repairing.
+and should remain offline and non-repairing.  A declared `digest_url` is therefore
+never fetched by the `*-check` path.
 
 A documentation target can then prepare only documentation dependencies:
 
