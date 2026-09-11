@@ -12,6 +12,9 @@ or infer whether a downloaded file is a script, library, template, image, data
 file, or another ordinary artifact.
 
 The committed declaration and approved SHA-256 digest define the intended bytes.
+An optional explicit `digest_url` may add upstream SHA-256 corroboration when
+network acquisition is required, but it never replaces the committed digest as
+the consumer's authorization boundary.
 
 ## Runtime Requirements
 
@@ -42,11 +45,16 @@ The conventional manifest filename is:
 dependencies.txt
 ```
 
-Each logical record declares one artifact using named fields:
+Each logical record declares one artifact using four required named fields and
+one optional field:
 
 ```text
-id=IDENTITY url=HTTPS_URL dest=RELATIVE_PATH digest=sha256:HEX_DIGEST
+id=IDENTITY url=HTTPS_URL dest=RELATIVE_PATH digest=sha256:HEX_DIGEST [digest_url=HTTPS_URL]
 ```
+
+Existing four-field manifests remain fully valid and retain their previous runtime
+and network behavior.  Only declarations that explicitly include `digest_url`
+opt into the supplemental upstream checksum check.
 
 A logical record may occupy one physical line:
 
@@ -60,7 +68,8 @@ or may use explicit trailing continuation markers:
 id=wesley-dean/mktext@0.0.7 \
   url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash \
   dest=vendor/mktext.bash \
-  digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd
+  digest=sha256:213cee4663512954f486c8a6ff00ddd36a9b4c48ceb3e9b71d9ec70a36c1e0dd \
+  digest_url=https://github.com/wesley-dean/mktext/releases/download/v0.0.7/mktext.bash.sha256
 ```
 
 Those forms are semantically equivalent.
@@ -141,7 +150,7 @@ Additional equals signs in values are data.
 Manifest contents are never sourced, evaluated, shell-expanded, or interpreted as
 shell commands.
 
-### Required fields
+### Required and optional fields
 
 Each record requires exactly one of each field:
 
@@ -150,13 +159,19 @@ Each record requires exactly one of each field:
 - `dest`
 - `digest`
 
+A record may additionally contain exactly one:
+
+- `digest_url`
+
 Field order is irrelevant, including when fields occupy separate physical lines.
 Any valid field may appear first; `id=` is not required to be physically first.
 
-Duplicate fields, missing fields, and unknown fields are errors.
+Duplicate fields, missing required fields, and unknown fields are errors.
 
 Unknown fields fail closed so an older bashdeps release never silently accepts a
-manifest that depends on newer semantics.
+manifest that depends on newer semantics.  Conversely, a newer release continues
+to accept historical four-field manifests without adding network work or changing
+their acceptance path.
 
 ### Comments
 
@@ -273,6 +288,55 @@ Digest equality establishes byte identity with the committed declaration.  It
 does not establish that the upstream software is safe, correctly versioned, or
 free from vulnerabilities.
 
+### digest_url
+
+`digest_url` is optional and, when present, must begin with:
+
+```text
+https://
+```
+
+It names the complete upstream checksum location to request.  Bashdeps never
+guesses that location: it does not append `.sha256`, fall back to `.256`, inspect
+release metadata, infer a sidecar filename, or follow URLs embedded in checksum
+content.
+
+`digest_url` is acquisition-time corroboration only.  It is retrieved only when
+`install` or `sync` must retrieve the associated artifact.  A destination whose
+local bytes already equal the committed `digest=` remains satisfied without any
+network access, and `verify` never retrieves `digest_url`.
+
+After LF/CRLF handling, blank checksum-resource lines are ignored and exactly one
+non-blank line must remain.  Version 1 accepts these forms:
+
+```text
+<64-hex-digest>
+sha256:<64-hex-digest>
+<64-hex-digest>  filename
+<64-hex-digest> *filename
+sha256:<64-hex-digest>  filename
+sha256:<64-hex-digest> *filename
+```
+
+The `sha256:` prefix is optional in fetched checksum text.  In its absence,
+SHA-256 is assumed, so a bare 64-hex token and the same token prefixed with
+`sha256:` are equivalent.  If an algorithm prefix is present, version 1 accepts
+only `sha256:`.  Hexadecimal checksum text is case-insensitive and normalized to
+lowercase before comparison.
+
+The optional filename portion is accepted as conventional checksum-tool syntax but
+is opaque and is not an authorization input.  It need not match the artifact URL
+basename or destination basename.  Multiple non-blank entries, comments, malformed
+content, and other explicit algorithms fail closed.  Aggregate checksum files such
+as `SHA256SUMS` are not selected by filename in version 1.
+
+A fetched checksum can reject a candidate but cannot authorize bytes rejected by
+the committed `digest=`.  A publisher compromise capable of replacing both an
+artifact and its adjacent checksum can make those live resources agree, which is
+why the committed digest remains mandatory.
+
+See ADR-023 for the complete trust and compatibility decision.
+
 ## Destination Root Policy
 
 The default destination root is `vendor`.
@@ -338,7 +402,7 @@ See ADR-013 for the rationale and superseded destination-scope decisions.
 ### install
 
 ```text
-bashdeps.bash install [--dest-root PATH] id=... url=... dest=... digest=...
+bashdeps.bash install [--dest-root PATH] id=... url=... dest=... digest=... [digest_url=...]
 ```
 
 `install` materializes one explicitly declared artifact.
@@ -350,20 +414,28 @@ arguments when ordinary shell syntax requires it; for example, a URL containing
 `&` should be passed as one quoted argument.
 
 If the existing destination is a valid ordinary file within the selected root
-whose SHA-256 digest already matches, `install` succeeds without network access or
-mutation.
+whose SHA-256 digest already matches the committed `digest=`, `install` succeeds
+without network access or mutation, even when `digest_url` is declared.
 
 Otherwise, `install`:
 
 1. validates the selected destination root and complete declaration;
 2. verifies that the declared destination is strictly beneath the selected root;
-3. acquires a candidate into private staging;
-4. verifies the candidate SHA-256 digest;
-5. creates required parent directories only after verification;
-6. publishes the verified bytes conservatively;
-7. sets a newly published file to mode `0644`;
-8. re-hashes the final destination;
-9. succeeds only if the final bytes match the declaration.
+3. acquires an artifact candidate into private staging;
+4. verifies the candidate against the committed SHA-256 digest;
+5. when `digest_url` is present, acquires the checksum resource into private
+   staging, parses exactly one supported SHA-256 value, and requires that value to
+   equal the artifact candidate's SHA-256;
+6. creates required parent directories only after all applicable verification
+   succeeds;
+7. publishes the verified bytes conservatively;
+8. sets a newly published file to mode `0644`;
+9. re-hashes the final destination; and
+10. succeeds only if the final bytes match the committed declaration.
+
+A candidate rejected by the committed digest may fail before `digest_url` is
+retrieved.  The upstream checksum is not fetched merely to obtain a second reason
+to reject already-unapproved bytes.
 
 ### verify
 
@@ -377,13 +449,15 @@ The default manifest is `dependencies.txt` and the default destination root is
 `verify`:
 
 - validates the selected destination root;
-- folds, parses, and validates the complete manifest;
+- folds, parses, and validates the complete manifest, including `digest_url`
+  declaration syntax when present;
 - rejects any declaration outside the selected destination root;
-- performs no network access;
+- performs no network access and never retrieves `digest_url`;
 - intentionally performs no filesystem mutation;
 - verifies that every declared destination exists as an acceptable regular file;
-- verifies that every declared destination has the approved SHA-256 digest;
-- ignores undeclared files;
+- verifies that every declared destination has the approved committed SHA-256
+  digest;
+- ignores undeclared files; and
 - ignores destination file mode.
 
 A valid empty manifest verifies successfully.
@@ -406,13 +480,18 @@ It:
 3. rejects any declaration outside the selected root;
 4. validates filesystem safety for every declared destination;
 5. hashes existing destinations;
-6. reuses destinations whose bytes already match;
+6. reuses destinations whose bytes already match the committed digest without
+   fetching their optional `digest_url`;
 7. identifies missing or mismatched destinations;
-8. acquires all required candidates into private staging;
-9. verifies every required candidate before intentional publication begins;
-10. creates missing parent directories only after candidate preflight succeeds;
-11. publishes verified candidates;
-12. performs a final verification of every declared destination.
+8. acquires all required artifact candidates into private staging;
+9. verifies each required artifact candidate against its committed digest;
+10. for each acquired candidate with `digest_url`, acquires and validates that
+    checksum resource and requires its SHA-256 value to match the candidate;
+11. completes all candidate and checksum-resource preflight before intentional
+    publication begins;
+12. creates missing parent directories only after candidate preflight succeeds;
+13. publishes verified candidates; and
+14. performs a final committed-digest verification of every declared destination.
 
 `sync` does not literally execute `bashdeps.bash install` once per manifest line.
 `install` and `sync` share internal logic, while `sync` preserves whole-manifest
@@ -459,6 +538,8 @@ curl -> wget -> failure
 ```
 
 Downloader-specific behavior is isolated behind a private transport adapter.
+Artifact candidates and declared `digest_url` resources use the same selected
+adapter, retry limits, and timeout behavior.
 
 The selected downloader writes only to private staging.  It never writes directly
 over a declared destination.
@@ -473,10 +554,12 @@ The Wget backend is eligible only when its local help surface advertises `-T` an
 `-t`.  When selected, version 1 invokes Wget with a 120-second timeout and one
 backend-managed try per acquisition-layer attempt.  Portable Wget implementations
 still have different timeout semantics, so bashdeps does not claim
-transport-policy parity with curl.  Mandatory SHA-256 verification remains the
-backend-independent authority for candidate acceptance.
+transport-policy parity with curl.  Mandatory committed SHA-256 verification
+remains the backend-independent authority for candidate acceptance.
 
-`verify` never invokes a downloader.
+`verify` never invokes a downloader.  `install` and `sync` do not require a
+downloader when all relevant local destinations already match their committed
+digests.
 
 ## SHA-256 Behavior
 
@@ -487,10 +570,13 @@ sha256sum -> shasum -a 256 -> failure
 ```
 
 The calculated lowercase hexadecimal digest is compared with the 64-character
-hexadecimal portion of the declaration.
+hexadecimal portion of the committed declaration.  When `digest_url` is declared
+for an acquired artifact, that same calculated digest must also equal the
+normalized SHA-256 value parsed from the fetched checksum resource.
 
-No successful downloader status, HTTP metadata, filename, timestamp, ETag, or
-version label substitutes for SHA-256 equality.
+No successful downloader status, HTTP metadata, filename, timestamp, ETag, version
+label, or upstream checksum by itself substitutes for equality with the committed
+SHA-256 digest.
 
 ## Filesystem Behavior
 
@@ -498,10 +584,13 @@ The physical current working directory is the project root for one invocation.
 The selected destination root is a project-relative security boundary within that
 project root.
 
-Network candidates are staged away from final destinations.
+Network artifact candidates and checksum resources are staged away from final
+destinations.  Checksum resources are transient verification inputs and are never
+published into the dependency tree.
 
-For multi-record `sync`, all candidates required by the current operation are
-acquired and verified before intentional publication begins.
+For multi-record `sync`, all candidates and all applicable upstream checksum
+verification required by the current operation complete before intentional
+publication begins.
 
 Before publication, existing path components are checked for symbolic links.
 Missing parent directories beneath the selected destination root may then be
@@ -531,12 +620,19 @@ The public exit status contract is:
 2  invalid CLI usage, invalid manifest, invalid dependency declaration, or invalid destination-root policy
 3  required runtime capability is unavailable or unusable
 4  network acquisition failed
-5  acquired candidate bytes do not match the approved digest
+5  acquired integrity verification failed
 6  filesystem safety, staging, or publication failed
 ```
 
-A malformed digest is status 2.  A syntactically valid declaration whose acquired
-candidate hashes differently is status 5.
+Status 2 includes malformed committed digests and malformed `digest_url`
+declarations such as duplicate or non-HTTPS fields.
+
+Status 4 includes failure to acquire either an artifact candidate or a declared
+checksum resource after the permitted attempts.
+
+Status 5 includes an acquired artifact that does not match the committed digest, a
+malformed, empty, multi-entry, or unsupported-algorithm checksum resource, and an
+artifact that does not match the upstream SHA-256 obtained from `digest_url`.
 
 An invalid folded record, including an unterminated continuation, a blank/comment
 line where continued record content is required, or a malformed continuation
@@ -608,10 +704,13 @@ retrieves release checksum sidecars MAY fall back from `<artifact>.sha256` to
 authorization, server, malformed-content, and checksum-verification failures SHALL
 remain failures rather than triggering legacy fallback.
 
-This sidecar naming compatibility does not change the dependency trust boundary.
-Manifest synchronization and bootstrap integrations continue to trust the
-SHA-256 digest committed by the consuming repository rather than dynamically
-replacing it with a value retrieved from a remote `.sha256` or `.256` file.
+ADR-023 does not make that release-sidecar naming convention an inference rule.
+A dependency's runtime checksum resource is requested only from an explicitly
+committed `digest_url`; bashdeps never derives `.sha256` or `.256` locations.
+
+The dependency trust boundary remains the SHA-256 digest committed by the consuming
+repository.  A declared `digest_url` adds a second rejecting condition for newly
+acquired bytes and never replaces the committed digest.
 
 No aggregate `SHA256SUMS` file is generated.
 
@@ -626,7 +725,8 @@ fresh checkout should use `make all` or run `make deps` before `make build`.
 The generated executables do not require Bash-Minifier, `dependencies.txt`, or the
 vendor tree at runtime.
 
-See ADR-019 for the checksum companion naming and compatibility decision.
+See ADR-019 for checksum companion naming and ADR-023 for supplemental runtime
+checksum verification.
 
 ## Consumer Make Integration
 
