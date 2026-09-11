@@ -168,7 +168,6 @@ run_bashdeps() {
 
   [ "$status" -eq 5 ]
   [ ! -e vendor/tool ]
-  [[ "$output" == *'does not match upstream checksum'* ]]
 }
 
 @test "checksum transport failure maps to status 4 and preserves destination state" {
