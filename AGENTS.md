@@ -413,10 +413,10 @@ rather than silently broadening the change.
 
 Follow the documentation-driven, test-second philosophy established by the ADRs.
 Source-code documentation SHALL follow ADR-014 and the repository standard in
-`doc/documentation-standard.md` when that standard applies to the maintained
+`doc/standards/bash/documentation-standard.md` when that standard applies to the maintained
 source being changed.
 
-The revised `doc/documentation-standard.md` applies to new manifest-manager source.
+The revised `doc/standards/bash/documentation-standard.md` applies to new manifest-manager source.
 Existing maintained scripts are not reformatted or backported to the revised
 standard as part of issue #17; that backport is a separate future change.
 
@@ -607,3 +607,12 @@ The repository may build and release both tools together, but each executable
 retains its own responsibility, source closure, and runtime requirements.
 
 Every change should preserve that clarity.
+
+## Shared Coding Standards
+
+This repository adopts the complete pinned `coding_standards@v1.0.9` snapshot under `doc/standards/`; `.codingstandardrc` records its verified release digest.  Applicable imported standards are governing requirements unless an accepted local ADR or explicit policy refines them.  Presence does not imply applicability, examples remain illustrative, imported standards are not edited locally, and upgrades are reviewed repository changes rather than automatic synchronization.
+
+Authoritative shared documentation standards used here:
+
+- Bash: `doc/standards/bash/documentation-standard.md`
+

@@ -15,7 +15,7 @@ The repository uses several complementary documentation layers:
   behavior of `bashdeps.bash`.
 - [`doc/manifest-manager-spec.md`](../manifest-manager-spec.md) describes the
   accepted maintainer-facing behavior of `manifest-manager.bash`.
-- [`doc/documentation-standard.md`](../documentation-standard.md) governs source
+- [`doc/standards/bash/documentation-standard.md`](../documentation-standard.md) governs source
   documentation for new maintained Bash work in this repository.
 - Doxygen reference pages preserve implementation-level contracts close to the
   maintained source.

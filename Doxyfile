@@ -31,7 +31,7 @@ INPUT                  = src/bashdeps.bash \
                          doc/decisions.md \
                          doc/bashdeps-spec.md \
                          doc/manifest-manager-spec.md \
-                         doc/documentation-standard.md
+                         doc/standards/bash/documentation-standard.md
 RECURSIVE              = YES
 FILE_PATTERNS          = *.bash \
                          *.md
