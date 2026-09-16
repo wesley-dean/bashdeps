@@ -834,7 +834,7 @@ and source-closure contract.
 
 The project follows documentation-driven, test-second development.  Maintained
 Bash source follows ADR-014.  New manifest-manager source follows the revised
-repository standard in `doc/documentation-standard.md`; existing scripts will be
+repository standard in `doc/standards/bash/documentation-standard.md`; existing scripts will be
 backported to that revised standard separately rather than as part of issue #17.
 
 Common targets are:
@@ -931,3 +931,12 @@ See [LICENSE](LICENSE).
 
 Contributions are welcome.  Please read [CONTRIBUTING.md](CONTRIBUTING.md) and
 follow the documented architecture and public behavior contracts.
+
+## Shared Coding Standards
+
+This repository adopts the complete pinned `coding_standards@v1.0.9` snapshot under `doc/standards/`; `.codingstandardrc` records its verified release digest.  Applicable imported standards are governing requirements unless an accepted local ADR or explicit policy refines them.  Presence does not imply applicability, examples remain illustrative, imported standards are not edited locally, and upgrades are reviewed repository changes rather than automatic synchronization.
+
+Authoritative shared documentation standards used here:
+
+- Bash: `doc/standards/bash/documentation-standard.md`
+

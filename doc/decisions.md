@@ -135,7 +135,7 @@ Maintained Bash source uses narrative-heavy Doxygen-style documentation for file
 function, variable, safety, and failure contracts.  Documentation of private
 helpers improves maintainability without changing ADR-011's public API boundary,
 and documentation-only changes must preserve executable behavior.  The repository
-now also contains `doc/documentation-standard.md` as the current detailed standard
+now also contains `doc/standards/bash/documentation-standard.md` as the current detailed standard
 for new maintained Bash work.  See
 [ADR-014](adr/ADR-014-documentation-first-source-code-commenting-standard.md).
 
@@ -227,3 +227,19 @@ remain network-free.  Manifest-manager understands and preserves the optional
 field, accepts it explicitly on `add`, and transforms and verifies an already
 present value during `update` without inferring checksum locations.  See
 [ADR-023](adr/ADR-023-add-supplemental-upstream-sha256-verification.md).
+
+## ADR-024: Adopt shared coding standards
+
+**Status:** Accepted
+
+The repository adopts the complete verified `coding_standards@v1.0.9` snapshot
+beneath `doc/standards/`, with exact release provenance recorded in
+`.codingstandardrc`.  Applicable imported standards govern where relevant while
+accepted repository-specific ADRs and explicit local policy retain precedence for
+intentional refinements; presence in the snapshot does not itself imply
+applicability.  Duplicate live documentation-standard files are removed where
+present so shared documentation rules have one authoritative managed path, while
+historical ADR text remains unchanged.  Future standards upgrades replace the
+complete snapshot through normal review rather than local edits or automatic
+synchronization.  See
+[ADR-024](adr/ADR-024-adopt-shared-coding-standards.md).

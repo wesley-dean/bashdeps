@@ -8,7 +8,11 @@ There are placeholders used in this template:
 - NUMBER: the ADR's number
 - TITLE: the title of the ADR
 - DATE: the date the ADR was drafted (YYYY-MM-DD format)
-- STATUS: the status of the ADR (Accepted, Proposed, etc.)
+
+Every committed ADR uses `Accepted` as its status.  For ADRs prepared in a pull
+request, merging the pull request is generally understood to constitute
+acceptance; supersession and similar historical relationships belong in the ADR
+narrative rather than in alternate status values.
 
 Replace the placeholders when drafting the ADR before committing it.
 
@@ -32,15 +36,14 @@ This is the date that the ADR was drafted written in YYYY-MM-DD format.
 
 ## Status
 
-STATUS
+Accepted
 
 <!--
-Specify the current status of this ADR.
-
-It is often safe to assume "accepted" here when this ADR is used in a Source
-Code Management (SCM) system as the review process resulting in the ADR being
-added to the repository may represent the acceptance of the ADR.  Your team
-may use different rules or conventions, so update this template as-needed
+Every committed ADR uses "Accepted" here.  If this ADR is introduced or changed
+through a pull request, merging that pull request is generally understood to be
+the act of accepting the ADR.  Record later supersession, replacement, or
+refinement in the ADR narrative and in doc/decisions.md rather than changing this
+status.
 -->
 
 ## Intent and Documentation Posture
