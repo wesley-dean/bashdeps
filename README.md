@@ -902,6 +902,24 @@ https://wesley-dean.github.io/bashdeps/
 See ADR-016 for the Pages generation/publication decision and ADR-017 for the
 superseding dependency-acquisition boundary.
 
+## Dependabot Maintenance
+
+Routine GitHub Actions version updates are checked weekly with a seven-day
+cooldown and collected in the `actions-version-updates` group, including
+eligible major, minor, and patch releases.  Security updates are separate
+and depend on the repository's security-update features being enabled.
+The current non-major auto-merge condition remains in place; a mixed
+group containing a major update is expected to require the normal
+review path.
+
+Review each dependency within a group, particularly actions that can write
+to the repository or publish release artifacts.  CI checks must exercise
+the relevant changed behavior before their success is treated as evidence.
+This configuration does not retroactively consolidate open PRs, guarantee
+one PR per week, or enforce CODEOWNER approval without branch protection.
+
+See ADR-025 for the decision, tradeoffs, and rollout boundaries.
+
 ## Architecture
 
 Architecture Decision Records are stored in `doc/adr/`.
