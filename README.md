@@ -902,23 +902,22 @@ https://wesley-dean.github.io/bashdeps/
 See ADR-016 for the Pages generation/publication decision and ADR-017 for the
 superseding dependency-acquisition boundary.
 
-## Dependabot Maintenance
+## Dependency Maintenance
 
-Routine GitHub Actions version updates are checked weekly with a seven-day
-cooldown and collected in the `actions-version-updates` group, including
-eligible major, minor, and patch releases.  Security updates are separate
-and depend on the repository's security-update features being enabled.
-The current non-major auto-merge condition remains in place; a mixed
-group containing a major update is expected to require the normal
-review path.
 
-Review each dependency within a group, particularly actions that can write
-to the repository or publish release artifacts.  CI checks must exercise
-the relevant changed behavior before their success is treated as evidence.
-This configuration does not retroactively consolidate open PRs, guarantee
-one PR per week, or enforce CODEOWNER approval without branch protection.
+Scheduled routine dependency updates are managed centrally by the Jenkins
+Renovate service, enrolled through root `renovate.json`.  Routine
+Dependabot GitHub Actions version-update PRs are disabled while security
+updates and vulnerability alerts remain independent.  The
+`dependabot[bot]`-scoped non-major auto-merge workflow is retained for
+security-related Dependabot PRs only.  Renovate remains subject to required
+checks and human review.
 
-See ADR-025 for the decision, tradeoffs, and rollout boundaries.
+Migration configuration does not itself establish that the Renovate
+machine account has write access, protections are effectively enforced,
+or Jenkins has executed successfully.  Verify those separately, and
+retire conclusively routine Dependabot PRs only after migration merge.
+See [ADR-026](doc/adr/ADR-026-migrate-routine-dependency-updates-to-renovate.md).
 
 ## Architecture
 
